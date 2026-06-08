@@ -1,0 +1,9 @@
+.DS_Store
+docs/
+web/node_modules/
+web/dist/
+web/.git*
+agent/.venv/
+agent/.env
+__pycache__/
+*.pyc
