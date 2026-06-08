@@ -1,5 +1,6 @@
 .DS_Store
-docs/
+docs/*
+!docs/project-overview.md
 web/node_modules/
 web/dist/
 web/.git*
