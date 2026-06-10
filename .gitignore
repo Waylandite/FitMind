@@ -6,5 +6,8 @@ web/dist/
 web/.git*
 agent/.venv/
 agent/.env
+database/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.egg-info/

@@ -7,12 +7,16 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-2F6690?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-0E7C66?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Agent_Workflow-1F3A5F?style=for-the-badge)](https://www.langchain.com/langgraph)
+[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-ORM-AA2B1D?style=for-the-badge&logo=sqlalchemy&logoColor=white)](https://www.sqlalchemy.org/)
+[![Alembic](https://img.shields.io/badge/Alembic-Migration-5B4B8A?style=for-the-badge)](https://alembic.sqlalchemy.org/)
+[![MySQL](https://img.shields.io/badge/MySQL-Storage-005C84?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-LLM-1E3A8A?style=for-the-badge)](https://api.deepseek.com/)
 [![React](https://img.shields.io/badge/React-Frontend-1C3144?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-Build-6C63FF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-UI-0B7285?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 
 <p>
-  <img src="https://skillicons.dev/icons?i=python,fastapi,react,vite,tailwind,git" alt="FitMind 技术栈图标" />
+  <img src="https://skillicons.dev/icons?i=python,fastapi,mysql,react,vite,tailwind,git" alt="FitMind 技术栈图标" />
 </p>
 
 </div>
@@ -113,6 +117,8 @@ FitMind 当前由两部分组成：
 - `FastAPI`
 - `Pydantic`
 - `LangChain / LangGraph`
+- `OpenAI Compatible SDK`
+- `DeepSeek Official API`
 
 负责：
 
@@ -120,17 +126,25 @@ FitMind 当前由两部分组成：
 - 承接用户对话消息
 - 路由训练、状态、饮食等意图
 - 输出结构化结果
+- 维护多轮对话上下文
+- 提供 SSE 流式返回
 
 ### 数据层
 
-当前仓库已经完成新的数据库设计方向，重点围绕：
+当前仓库已经完成新的数据库与迁移基础设施，重点围绕：
 
+- `MySQL`
+- `SQLAlchemy 2.0`
+- `Alembic`
 - 普通用户表
 - 健身档案
 - 训练计划
 - 训练执行
 - 身体状态
 - 饮食记录
+- 对话日志
+- Session 短期记忆
+- 水位线 Summary 压缩
 
 详见：
 
@@ -153,10 +167,13 @@ FitMind/
 ## 已完成内容
 
 - 登录页与对话页前端原型
-- Web 到 Agent 的整体分层
-- Python Agent 服务骨架
-- 健身数据导向的数据库设计文档
-- GitHub 友好的项目结构整理
+- Web 对话页接入后端流式 SSE Chat
+- Python Agent API、DeepSeek 官方模型接入
+- MySQL + SQLAlchemy + Alembic 数据层落地
+- 健身数据导向的核心表与记忆表设计
+- Session 级多轮上下文窗口
+- 基于水位线的历史 Summary 压缩机制
+- 对话日志持久化与本地联调验证
 
 ---
 
@@ -164,20 +181,20 @@ FitMind/
 
 ### 近期
 
-- 打通 Web 对话页到 Agent API
-- 实现训练 / 饮食 / 状态的基础意图识别
-- 接入数据库与 ORM
+- 训练 / 饮食 / 状态的结构化抽取落库
+- Session Summary 与长期记忆联动
+- 将对话输出与业务表写入编排进 Agent 主流程
 
 ### 中期
 
-- 落地训练计划与训练结果写库
 - 支持纠错与补录流程
 - 支持训练日志查询与回顾
+- 构建可解释的健身记忆系统
 
 ### 后续
 
 - 引入更完整的 LangGraph 工作流
-- 增强多轮上下文和结构化追问
+- 增强结构化追问和工具调用
 - 支持周报、复盘和趋势分析
 
 ---
@@ -199,8 +216,16 @@ cd agent
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+alembic upgrade head
 uvicorn fitmind_agent.main:app --reload --port 8000
 ```
+
+### 当前本地链路
+
+- 前端：`http://127.0.0.1:5173`
+- 后端：`http://127.0.0.1:8000`
+- 流式对话：`POST /api/v1/chat/stream`
+- 直连 LLM：`POST /api/v1/llm/chat`
 
 ---
 

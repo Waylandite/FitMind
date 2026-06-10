@@ -11,6 +11,10 @@ dependencies = [
   "pydantic-settings>=2.4.0",
   "langgraph>=0.2.0",
   "langchain>=0.3.0",
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.13.3",
+  "pymysql>=1.1.1",
+  "openai>=1.54.0",
 ]
 
 [project.optional-dependencies]

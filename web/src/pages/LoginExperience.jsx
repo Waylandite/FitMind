@@ -166,6 +166,7 @@ function LoginExperience({ onLoginSuccess }) {
       ok: true,
       message: '登录成功，正在进入对话页...',
       user: {
+        userId: 1,
         name: normalizedIdentifier === 'demo@fitmind.ai' ? 'FitMind Demo' : 'FitMind',
         identifier: payload.identifier,
       },
