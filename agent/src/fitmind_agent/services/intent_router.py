@@ -25,11 +25,19 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         db_intent_type="plan",
         description="待接入当日训练计划推荐模块。",
     ),
-    "today_nutrition_sleep_record": IntentModuleRoute(
-        intent="today_nutrition_sleep_record",
-        module_name="nutrition_body_status_writer",
+    "today_nutrition_record": IntentModuleRoute(
+        intent="today_nutrition_record",
+        module_name="nutrition_record_react_writer",
         db_intent_type="nutrition",
-        description="待接入饮食、睡眠和身体状态记录模块。",
+        description="已接入饮食记录解析、ReAct 工具接入预留和落库模块。",
+        status="ready",
+    ),
+    "today_body_status_record": IntentModuleRoute(
+        intent="today_body_status_record",
+        module_name="body_status_writer",
+        db_intent_type="body_status",
+        description="已接入睡眠和身体状态解析及落库模块。",
+        status="ready",
     ),
     "user_workout_plan_update": IntentModuleRoute(
         intent="user_workout_plan_update",

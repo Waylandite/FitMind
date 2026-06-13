@@ -210,7 +210,6 @@ class UserNutritionRecord(Base, TimestampMixin):
     protein_g_estimate: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     carbs_g_estimate: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     fat_g_estimate: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
-    remark: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped[User] = relationship(back_populates="nutrition_records")
     conversation_logs: Mapped[list[ConversationLog]] = relationship(
@@ -246,7 +245,6 @@ class UserBodyStatusRecord(Base, TimestampMixin):
     body_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
     mood: Mapped[str | None] = mapped_column(String(50))
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
-    remark: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped[User] = relationship(back_populates="body_status_records")
     conversation_logs: Mapped[list[ConversationLog]] = relationship(

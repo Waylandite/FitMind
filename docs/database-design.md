@@ -427,14 +427,16 @@ chat_sessions
 - `protein_g_estimate`
 - `carbs_g_estimate`
 - `fat_g_estimate`
-- `remark`
 - `created_at`
 - `updated_at`
 
 说明：
 
 - 第一版核心仍然是 `raw_text`
+- 同一天内多次饮食记录会追加到 `raw_text`，并保留写入时间
 - 后面的营养估算字段可以为空
+- 营养估算字段表示“今天截至目前”的累计值，由饮食记录链路结合当天上下文重新分析后更新
+- 当前已预留 ReAct / MCP 工具接入，用于后续更准确计算热量、蛋白、碳水和脂肪
 - 后续如果需要拆成早餐/午餐/晚餐明细，可再新增子表
 
 ---
@@ -460,13 +462,14 @@ chat_sessions
 - `body_weight_kg`
 - `mood`
 - `raw_text`
-- `remark`
 - `created_at`
 - `updated_at`
 
 说明：
 
 - 第一版允许结构化字段和原文同时存在
+- 同一天内多次身体状态记录会追加到 `raw_text`，并保留写入时间
+- 结构化字段保存当天最新非空快照
 - 如果用户只说“今天状态一般，腿有点酸”，也可以只保存 `raw_text`
 
 ---

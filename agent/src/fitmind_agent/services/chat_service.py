@@ -17,9 +17,11 @@ from fitmind_agent.schemas.intent import IntentRecognitionResult
 from fitmind_agent.schemas.llm import LLMChatRequest
 from fitmind_agent.schemas.llm import LLMMessage
 from fitmind_agent.services.chat_context import ConversationContextBuilder
+from fitmind_agent.services.body_status_record_service import BodyStatusRecordService
 from fitmind_agent.services.intent_classifier import IntentClassifier
 from fitmind_agent.services.intent_router import IntentRouter
 from fitmind_agent.services.llm_service import LLMService
+from fitmind_agent.services.nutrition_record_service import NutritionRecordService
 from fitmind_agent.services.session_summary_service import SessionSummaryService
 from fitmind_agent.services.workout_record_service import WorkoutRecordService
 
@@ -55,6 +57,64 @@ class ChatService:
                 intent_result=intent_result,
                 module_route=module_route,
             )
+            nutrition_result = NutritionRecordService(
+                db=self.db,
+                llm_service=self.llm_service,
+            ).maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            )
+            if nutrition_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=nutrition_result.reply,
+                    session_id=session_id,
+                    db_intent_type="nutrition",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                return ChatResponse(
+                    user_id=payload.user_id,
+                    thread_id=payload.thread_id,
+                    session_id=session_id,
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source,
+                    module_name=module_route.module_name,
+                    module_status=module_route.status,
+                    model="fitmind-workflow",
+                    reply=nutrition_result.reply,
+                )
+
+            body_status_result = BodyStatusRecordService(
+                db=self.db,
+                llm_service=self.llm_service,
+            ).maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            )
+            if body_status_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=body_status_result.reply,
+                    session_id=session_id,
+                    db_intent_type="body_status",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                return ChatResponse(
+                    user_id=payload.user_id,
+                    thread_id=payload.thread_id,
+                    session_id=session_id,
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source,
+                    module_name=module_route.module_name,
+                    module_status=module_route.status,
+                    model="fitmind-workflow",
+                    reply=body_status_result.reply,
+                )
+
             workout_result = WorkoutRecordService(
                 db=self.db,
                 llm_service=self.llm_service,
@@ -151,6 +211,130 @@ class ChatService:
                     "session_id": session_id,
                 }
             )
+            nutrition_result = NutritionRecordService(
+                db=self.db,
+                llm_service=self.llm_service,
+            ).maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            )
+            if nutrition_result.handled:
+                yield self._format_sse(
+                    {
+                        "type": "workflow",
+                        "workflow": "nutrition_record",
+                        "action": nutrition_result.action,
+                        "payload": (
+                            nutrition_result.payload.model_dump(mode="json")
+                            if nutrition_result.payload
+                            else None
+                        ),
+                        "persist_result": (
+                            nutrition_result.persist_result.model_dump(mode="json")
+                            if nutrition_result.persist_result
+                            else None
+                        ),
+                    }
+                )
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=nutrition_result.reply,
+                    session_id=session_id,
+                    db_intent_type="nutrition",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield self._format_sse(
+                    {
+                        "type": "delta",
+                        "content": nutrition_result.reply,
+                        "model": "fitmind-workflow",
+                    }
+                )
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": nutrition_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "nutrition_record",
+                            "action": nutrition_result.action,
+                        },
+                    }
+                )
+                return
+
+            body_status_result = BodyStatusRecordService(
+                db=self.db,
+                llm_service=self.llm_service,
+            ).maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            )
+            if body_status_result.handled:
+                yield self._format_sse(
+                    {
+                        "type": "workflow",
+                        "workflow": "body_status_record",
+                        "action": body_status_result.action,
+                        "payload": (
+                            body_status_result.payload.model_dump(mode="json")
+                            if body_status_result.payload
+                            else None
+                        ),
+                        "persist_result": (
+                            body_status_result.persist_result.model_dump(mode="json")
+                            if body_status_result.persist_result
+                            else None
+                        ),
+                    }
+                )
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=body_status_result.reply,
+                    session_id=session_id,
+                    db_intent_type="body_status",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield self._format_sse(
+                    {
+                        "type": "delta",
+                        "content": body_status_result.reply,
+                        "model": "fitmind-workflow",
+                    }
+                )
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": body_status_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "body_status_record",
+                            "action": body_status_result.action,
+                        },
+                    }
+                )
+                return
+
             workout_result = WorkoutRecordService(
                 db=self.db,
                 llm_service=self.llm_service,

@@ -2,7 +2,7 @@
 
 # FitMind
 
-### 用自然语言记录训练，让健身数据真正沉淀下来
+### 用自然语言记录训练、饮食与身体状态，让健身数据真正沉淀下来
 
 [![Python](https://img.shields.io/badge/Python-3.11+-2F6690?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-0E7C66?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -60,7 +60,7 @@ FitMind 当前由两部分组成：
 自然语言输入
   -> Web 对话界面
   -> Python Agent API
-  -> LangGraph 工作流
+  -> 意图识别与 Agent 工作流
   -> 健身结构化事实
   -> 数据库存储与后续分析
 ```
@@ -82,13 +82,19 @@ FitMind 当前由两部分组成：
 
 ### 3. 身体状态记录
 
-- 记录睡眠、疲劳、酸痛、主观状态
+- 独立识别 `today_body_status_record`
+- 记录睡眠、疲劳、酸痛、体重、压力、心情和恢复状态
+- 支持同日多次记录，`raw_text` 按时间刻度追加
+- 结构化字段保留最新非空快照
 - 为训练解释和后续建议提供上下文
 
 ### 4. 饮食与补剂记录
 
-- 记录餐次、食物、份量和补剂
-- 为后续营养分析预留数据基础
+- 独立识别 `today_nutrition_record`
+- 记录餐次、食物、份量、补剂和营养估算
+- 读取当天已有饮食记录作为上下文
+- 饮食字段表示“今天截至目前”的累计估算值
+- 已预留 ReAct / MCP 工具接入，用于后续更准确计算热量、蛋白、碳水和脂肪
 
 ### 5. 修改与补录
 
@@ -128,6 +134,8 @@ FitMind 当前由两部分组成：
 - 输出结构化结果
 - 维护多轮对话上下文
 - 提供 SSE 流式返回
+- 记录意图识别结果，方便追踪和调试
+- 为饮食记录预留 ReAct 工具调用链路
 
 ### 数据层
 
@@ -143,6 +151,7 @@ FitMind 当前由两部分组成：
 - 身体状态
 - 饮食记录
 - 对话日志
+- 意图识别日志
 - Session 短期记忆
 - 水位线 Summary 压缩
 
@@ -174,6 +183,11 @@ FitMind/
 - Session 级多轮上下文窗口
 - 基于水位线的历史 Summary 压缩机制
 - 对话日志持久化与本地联调验证
+- 意图识别结果落库到 `intent_recognition_logs`
+- 当日训练记录：结构化提取、用户确认、动作明细落库
+- 当日饮食记录：独立意图、今日上下文填充、ReAct 工具接入预留、饮食表落库
+- 当日身体状态记录：独立意图、今日上下文填充、身体状态表落库
+- 饮食和身体状态表已移除 `remark`，统一使用 `raw_text` 保存原始流水
 
 ---
 
@@ -181,9 +195,9 @@ FitMind/
 
 ### 近期
 
-- 训练 / 饮食 / 状态的结构化抽取落库
+- 接入饮食 ReAct 工具链：食物识别、份量估算、营养查询和汇总
 - Session Summary 与长期记忆联动
-- 将对话输出与业务表写入编排进 Agent 主流程
+- 完善用户计划更新、最近训练总结和今日训练推荐模块
 
 ### 中期
 
@@ -239,6 +253,12 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 
 - [docs/database-design.md](docs/database-design.md)  
   面向健身计划与训练数据的数据库设计
+
+- [docs/intent-system.md](docs/intent-system.md)  
+  当前支持的意图类型、路由模块和实现状态
+
+- [docs/nutrition-react-design.md](docs/nutrition-react-design.md)  
+  饮食记录 ReAct / MCP 工具调用设计
 
 ---
 
