@@ -19,5 +19,9 @@ class ChatResponse(BaseModel):
     thread_id: str
     session_id: int | None = None
     intent: str
+    intent_confidence: float | None = None
+    intent_source: str | None = None
+    module_name: str | None = None
+    module_status: str | None = None
     model: str | None = None
     reply: str

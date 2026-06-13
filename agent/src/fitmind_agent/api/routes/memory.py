@@ -15,6 +15,7 @@ from fitmind_agent.schemas.memory import ChatSessionSummaryCreate
 from fitmind_agent.schemas.memory import ChatSessionSummaryRead
 from fitmind_agent.schemas.memory import ChatSessionSummaryUpdate
 from fitmind_agent.schemas.memory import ChatSessionUpdate
+from fitmind_agent.schemas.memory import ConversationLogRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryCreate
 from fitmind_agent.schemas.memory import UserDefinedMemoryRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryUpdate
@@ -107,6 +108,14 @@ def list_chat_sessions(
     db: Session = Depends(get_db_session),
 ) -> list[ChatSessionRead]:
     return MemoryService(db).list_chat_sessions(user_id=user_id, status=status)
+
+
+@router.get("/sessions/{session_id}/messages", response_model=list[ConversationLogRead])
+def list_chat_session_messages(
+    session_id: int,
+    db: Session = Depends(get_db_session),
+) -> list[ConversationLogRead]:
+    return MemoryService(db).list_session_messages(session_id=session_id)
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionRead)

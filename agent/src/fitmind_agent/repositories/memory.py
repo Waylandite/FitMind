@@ -203,6 +203,14 @@ class ConversationLogRepository:
         rows.reverse()
         return rows
 
+    def list_all_by_session(self, session_id: int) -> list[ConversationLog]:
+        stmt = (
+            select(ConversationLog)
+            .where(ConversationLog.session_id == session_id)
+            .order_by(ConversationLog.id.asc())
+        )
+        return list(self.session.scalars(stmt))
+
     def list_between_session_watermarks(
         self,
         session_id: int,

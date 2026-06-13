@@ -127,6 +127,20 @@ class ChatSessionRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConversationLogRead(BaseModel):
+    id: int
+    user_id: int
+    thread_id: str
+    session_id: int | None
+    record_date: date | None
+    role: str
+    message_text: str
+    intent_type: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ChatSessionSummaryCreate(BaseModel):
     session_id: int
     user_id: int

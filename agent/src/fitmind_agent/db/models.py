@@ -54,9 +54,11 @@ class User(Base, TimestampMixin):
     nutrition_records: Mapped[list[UserNutritionRecord]] = relationship(back_populates="user")
     body_status_records: Mapped[list[UserBodyStatusRecord]] = relationship(back_populates="user")
     conversation_logs: Mapped[list[ConversationLog]] = relationship(back_populates="user")
+    intent_recognition_logs: Mapped[list[IntentRecognitionLog]] = relationship(back_populates="user")
     defined_memories: Mapped[list[UserDefinedMemory]] = relationship(back_populates="user")
     derived_memories: Mapped[list[AgentDerivedMemory]] = relationship(back_populates="user")
     chat_sessions: Mapped[list[ChatSession]] = relationship(back_populates="user")
+    workout_record_drafts: Mapped[list[WorkoutRecordDraft]] = relationship(back_populates="user")
 
 
 class UserProfile(Base, TimestampMixin):
@@ -159,6 +161,39 @@ class UserWorkoutRecordItem(Base, TimestampMixin):
     remark: Mapped[str | None] = mapped_column(Text)
 
     workout_record: Mapped[UserWorkoutRecord] = relationship(back_populates="items")
+
+
+class WorkoutRecordDraft(Base, TimestampMixin):
+    __tablename__ = "workout_record_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'superseded')",
+            name="chk_workout_record_drafts_status",
+        ),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="chk_workout_record_drafts_confidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_payload: Mapped[dict | None] = mapped_column(JSON)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    workout_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_workout_records.id", ondelete="SET NULL")
+    )
+    remark: Mapped[str | None] = mapped_column(Text)
+
+    user: Mapped[User] = relationship(back_populates="workout_record_drafts")
+    session: Mapped[ChatSession | None] = relationship()
+    workout_record: Mapped[UserWorkoutRecord | None] = relationship()
 
 
 class UserNutritionRecord(Base, TimestampMixin):
@@ -264,6 +299,44 @@ class ConversationLog(Base):
     body_status_record: Mapped[UserBodyStatusRecord | None] = relationship(
         back_populates="conversation_logs"
     )
+
+
+class IntentRecognitionLog(Base):
+    __tablename__ = "intent_recognition_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('llm', 'keyword', 'fallback')",
+            name="chk_intent_recognition_logs_source",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1",
+            name="chk_intent_recognition_logs_confidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    final_intent: Mapped[str] = mapped_column(String(80), nullable=False)
+    confidence_score: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    keyword_intent: Mapped[str | None] = mapped_column(String(80))
+    keyword_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    matched_keywords: Mapped[list | None] = mapped_column(JSON)
+    module_name: Mapped[str | None] = mapped_column(String(100))
+    module_status: Mapped[str | None] = mapped_column(String(30))
+    db_intent_type: Mapped[str | None] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="intent_recognition_logs")
+    session: Mapped[ChatSession | None] = relationship()
 
 
 class UserDefinedMemory(Base, TimestampMixin):

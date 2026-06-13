@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from fitmind_agent.repositories.memory import AgentDerivedMemoryRepository
 from fitmind_agent.repositories.memory import ChatSessionRepository
 from fitmind_agent.repositories.memory import ChatSessionSummaryRepository
+from fitmind_agent.repositories.memory import ConversationLogRepository
 from fitmind_agent.repositories.memory import UserDefinedMemoryRepository
 from fitmind_agent.schemas.memory import AgentDerivedMemoryCreate
 from fitmind_agent.schemas.memory import AgentDerivedMemoryRead
@@ -15,6 +16,7 @@ from fitmind_agent.schemas.memory import ChatSessionSummaryCreate
 from fitmind_agent.schemas.memory import ChatSessionSummaryRead
 from fitmind_agent.schemas.memory import ChatSessionSummaryUpdate
 from fitmind_agent.schemas.memory import ChatSessionUpdate
+from fitmind_agent.schemas.memory import ConversationLogRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryCreate
 from fitmind_agent.schemas.memory import UserDefinedMemoryRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryUpdate
@@ -26,6 +28,7 @@ class MemoryService:
         self.agent_derived_repo = AgentDerivedMemoryRepository(db)
         self.chat_session_repo = ChatSessionRepository(db)
         self.summary_repo = ChatSessionSummaryRepository(db)
+        self.conversation_log_repo = ConversationLogRepository(db)
 
     def create_user_defined_memory(self, payload: UserDefinedMemoryCreate) -> UserDefinedMemoryRead:
         memory = self.user_defined_repo.create(payload.model_dump())
@@ -121,3 +124,7 @@ class MemoryService:
             return False
         self.summary_repo.delete(summary)
         return True
+
+    def list_session_messages(self, session_id: int) -> list[ConversationLogRead]:
+        records = self.conversation_log_repo.list_all_by_session(session_id=session_id)
+        return [ConversationLogRead.model_validate(record) for record in records]

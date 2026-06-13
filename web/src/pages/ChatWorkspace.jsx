@@ -1,22 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const starterMessages = [
-  {
-    id: 'm1',
-    role: 'assistant',
-    title: '今日入口',
-    content:
-      '我是 FitMind。你可以直接告诉我今天的训练计划、实际完成情况、身体状态或饮食内容，我会帮你整理成结构化记录。',
-  },
-  {
-    id: 'm2',
-    role: 'assistant',
-    title: '示例',
-    content:
-      '例如：今天练胸肩三头，卧推 5 组，状态一般，午饭吃了鸡胸和米饭。',
-  },
-]
-
 const quickPrompts = [
   '记录今天的训练计划',
   '补一条饮食记录',
@@ -29,6 +12,12 @@ const apiBaseUrl =
 
 const defaultSystemPrompt =
   '你是 FitMind，一个专业、简洁、友好的健身与健康助手。请围绕用户输入，给出清晰结论和下一步建议。'
+
+const emptyAssistantCard = {
+  id: 'starter-assistant',
+  role: 'assistant',
+  content: '新的会话已经创建。现在可以直接告诉我你的训练、饮食或身体状态。',
+}
 
 function parseSseBuffer(buffer, onEvent) {
   const segments = buffer.split('\n\n')
@@ -58,18 +47,69 @@ function parseSseBuffer(buffer, onEvent) {
   return rest
 }
 
+function roleMeta(role) {
+  if (role === 'user') {
+    return { label: '我', badge: 'user' }
+  }
+
+  if (role === 'system') {
+    return { label: '系统', badge: 'system' }
+  }
+
+  return { label: 'AI', badge: 'assistant' }
+}
+
+function formatSessionTitle(sessionItem, index) {
+  if (sessionItem.title?.trim()) {
+    return sessionItem.title.trim()
+  }
+
+  return `会话 ${index + 1}`
+}
+
+function buildThreadId(userId) {
+  const randomPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  return `session-${userId}-${randomPart}`
+}
+
+function formatMessageTime(value) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 function ChatWorkspace({ session, onLogout }) {
-  const [messages, setMessages] = useState(starterMessages)
+  const [messages, setMessages] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [activeSessionId, setActiveSessionId] = useState(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [connectionState, setConnectionState] = useState('实时流式已就绪')
+  const [loadingSessions, setLoadingSessions] = useState(true)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
+  const [connectionState, setConnectionState] = useState('已连接')
   const [errorMessage, setErrorMessage] = useState('')
   const viewportRef = useRef(null)
   const assistantMessageIdRef = useRef(null)
+  const userId = session.userId ?? 1
 
-  const threadId = useMemo(
-    () => `thread-${session.userId ?? 1}-${session.identifier?.toLowerCase?.() ?? 'demo'}`,
-    [session.identifier, session.userId],
+  const activeSession = useMemo(
+    () => sessions.find((item) => item.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
   )
 
   useEffect(() => {
@@ -83,37 +123,207 @@ function ChatWorkspace({ session, onLogout }) {
     })
   }, [messages, sending])
 
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrap = async () => {
+      setLoadingSessions(true)
+      try {
+        const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
+        if (!response.ok) {
+          throw new Error(`会话列表请求失败: ${response.status}`)
+        }
+
+        const records = await response.json()
+        if (cancelled) {
+          return
+        }
+
+        setSessions(records)
+
+        if (records.length > 0) {
+          setActiveSessionId(records[0].id)
+        } else {
+          const created = await createSessionRecord()
+          if (!cancelled && created) {
+            setSessions([created])
+            setActiveSessionId(created.id)
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error instanceof Error ? error.message : '加载会话失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingSessions(false)
+        }
+      }
+    }
+
+    bootstrap()
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      return
+    }
+
+    let cancelled = false
+
+    const fetchMessages = async () => {
+      setLoadingMessages(true)
+      setErrorMessage('')
+      try {
+        const response = await fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/messages`)
+        if (!response.ok) {
+          throw new Error(`会话历史请求失败: ${response.status}`)
+        }
+
+        const records = await response.json()
+        if (cancelled) {
+          return
+        }
+
+        if (!records.length) {
+          setMessages([emptyAssistantCard])
+        } else {
+          setMessages(
+            records.map((record) => ({
+              id: `message-${record.id}`,
+              role: record.role,
+              content: record.message_text,
+              createdAt: record.created_at,
+            })),
+          )
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error instanceof Error ? error.message : '加载消息失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingMessages(false)
+        }
+      }
+    }
+
+    fetchMessages()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId])
+
+  const createSessionRecord = async () => {
+    const response = await fetch(`${apiBaseUrl}/memories/sessions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        thread_id: buildThreadId(userId),
+        title: '新的会话',
+        status: 'active',
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`创建会话失败: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
+  const refreshSessions = async (nextActiveId = activeSessionId) => {
+    const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
+    if (!response.ok) {
+      throw new Error(`刷新会话失败: ${response.status}`)
+    }
+
+    const records = await response.json()
+    setSessions(records)
+    if (nextActiveId) {
+      setActiveSessionId(nextActiveId)
+    } else if (records[0]) {
+      setActiveSessionId(records[0].id)
+    }
+  }
+
+  const handleCreateSession = async () => {
+    if (creatingSession || sending) {
+      return
+    }
+
+    setCreatingSession(true)
+    setErrorMessage('')
+
+    try {
+      const created = await createSessionRecord()
+      setSessions((current) => [created, ...current])
+      setActiveSessionId(created.id)
+      setMessages([emptyAssistantCard])
+      setConnectionState('新会话已创建')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '创建会话失败')
+    } finally {
+      setCreatingSession(false)
+    }
+  }
+
+  const handleSelectSession = (sessionId) => {
+    if (sending || sessionId === activeSessionId) {
+      return
+    }
+
+    setActiveSessionId(sessionId)
+    setConnectionState('已切换会话')
+  }
+
   const handleSend = async (prefill) => {
     const text = (prefill ?? draft).trim()
 
-    if (!text || sending) {
+    if (!text || sending || !activeSession) {
       return
     }
 
     setErrorMessage('')
+
     const userMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: text,
+      createdAt: new Date().toISOString(),
     }
 
     const assistantId = `assistant-${Date.now()}`
     assistantMessageIdRef.current = assistantId
 
-    setMessages((current) => [
-      ...current,
-      userMessage,
-      {
-        id: assistantId,
-        role: 'assistant',
-        title: 'FitMind',
-        content: '',
-        streaming: true,
-      },
-    ])
+    setMessages((current) => {
+      const cleaned =
+        current.length === 1 && current[0].id === emptyAssistantCard.id ? [] : current
+
+      return [
+        ...cleaned,
+        userMessage,
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          streaming: true,
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    })
+
     setDraft('')
     setSending(true)
-    setConnectionState('正在连接模型流...')
+    setConnectionState('模型正在回复')
 
     try {
       const response = await fetch(`${apiBaseUrl}/chat/stream`, {
@@ -122,8 +332,8 @@ function ChatWorkspace({ session, onLogout }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: session.userId ?? 1,
-          thread_id: threadId,
+          user_id: userId,
+          thread_id: activeSession.thread_id,
           message: text,
           system_prompt: defaultSystemPrompt,
           persist_log: true,
@@ -134,7 +344,6 @@ function ChatWorkspace({ session, onLogout }) {
         throw new Error(`请求失败: ${response.status}`)
       }
 
-      setConnectionState('模型正在输出')
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
@@ -151,8 +360,14 @@ function ChatWorkspace({ session, onLogout }) {
             return
           }
 
+          if (event.type === 'intent') {
+            const percent = Math.round((event.confidence ?? 0) * 100)
+            setConnectionState(`意图 ${event.intent ?? 'unknown'} · ${percent}%`)
+            return
+          }
+
           if (event.type === 'session') {
-            setConnectionState(`已连接会话 ${event.session_id}`)
+            setConnectionState(`会话 ${event.session_id} 已连接`)
             return
           }
 
@@ -183,7 +398,12 @@ function ChatWorkspace({ session, onLogout }) {
                   : message,
               ),
             )
-            setConnectionState(`模型已返回 · ${event.model ?? 'deepseek-v4-flash'}`)
+            if (event.intent) {
+              const percent = Math.round((event.intent_confidence ?? 0) * 100)
+              setConnectionState(`已完成 · ${event.intent} · ${percent}%`)
+            } else {
+              setConnectionState(`已完成 · ${event.model ?? 'deepseek-v4-flash'}`)
+            }
             return
           }
 
@@ -204,6 +424,8 @@ function ChatWorkspace({ session, onLogout }) {
           }
         })
       }
+
+      await refreshSessions(activeSession.id)
     } catch (error) {
       const message = error instanceof Error ? error.message : '请求失败'
       setErrorMessage(message)
@@ -225,149 +447,228 @@ function ChatWorkspace({ session, onLogout }) {
     }
   }
 
+  const handleComposerKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      handleSend()
+    }
+  }
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#07110f] text-[var(--ink-dark)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(141,213,186,0.18),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(210,167,105,0.12),transparent_22%),linear-gradient(180deg,#07110f_0%,#0d1715_100%)]" />
-      <div className="grid-noise absolute inset-0 opacity-30" />
-
-      <div className="relative flex min-h-screen">
-        <aside className="hidden w-[18rem] shrink-0 flex-col border-r border-white/8 bg-[rgba(255,248,241,0.03)] px-5 py-5 backdrop-blur xl:flex">
-          <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4">
-            <p className="font-mono text-[0.66rem] uppercase tracking-[0.28em] text-emerald-100/70">
-              FitMind
-            </p>
-            <h1 className="mt-3 font-display text-[2rem] leading-none text-[var(--ink-dark)]">
-              健身对话台
-            </h1>
-            <p className="mt-3 text-sm leading-6 text-stone-300">
-              用自然语言记录训练、饮食与恢复，让每次对话都留下结构化痕迹。
-            </p>
-          </div>
-
-          <div className="mt-4 rounded-[1.5rem] border border-white/10 bg-white/[0.035] p-4">
-            <p className="font-mono text-[0.62rem] uppercase tracking-[0.26em] text-stone-300/60">
-              当前身份
-            </p>
-            <p className="mt-3 text-lg text-stone-100">{session.name}</p>
-            <p className="mt-1 text-sm text-stone-400">{session.identifier}</p>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {quickPrompts.map((prompt) => (
+    <main className="min-h-screen bg-[#0b1020] text-slate-100">
+      <div className="mx-auto flex h-screen max-w-[1600px] flex-col xl:flex-row">
+        <aside className="flex h-[18rem] shrink-0 flex-col border-b border-slate-800 bg-slate-950 xl:h-screen xl:w-[320px] xl:border-b-0 xl:border-r">
+          <div className="border-b border-slate-800 px-5 py-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">
+                  FitMind
+                </p>
+                <h1 className="mt-2 text-xl font-semibold text-white">会话管理</h1>
+              </div>
               <button
-                key={prompt}
                 type="button"
-                onClick={() => handleSend(prompt)}
-                className="chat-side-button w-full text-left"
+                onClick={handleCreateSession}
+                disabled={creatingSession || sending}
+                className="inline-flex h-10 items-center rounded-xl bg-slate-100 px-4 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                {prompt}
+                {creatingSession ? '创建中' : '新会话'}
               </button>
-            ))}
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.24em] text-slate-500">当前用户</p>
+              <p className="mt-2 text-base font-medium text-white">{session.name}</p>
+              <p className="mt-1 text-sm text-slate-400">{session.identifier}</p>
+            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onLogout}
-            className="glass-button mt-auto w-full justify-center"
-          >
-            退出登录
-          </button>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 app-scrollbar">
+            <div className="space-y-3">
+              {loadingSessions ? (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
+                  正在加载会话...
+                </div>
+              ) : sessions.length ? (
+                sessions.map((sessionItem, index) => {
+                  const isActive = sessionItem.id === activeSessionId
+                  return (
+                    <button
+                      key={sessionItem.id}
+                      type="button"
+                      onClick={() => handleSelectSession(sessionItem.id)}
+                      className={`block w-full rounded-2xl border px-4 py-4 text-left transition ${
+                        isActive
+                          ? 'border-slate-500 bg-slate-800 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]'
+                          : 'border-slate-800 bg-slate-900 hover:border-slate-700 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="line-clamp-2 text-sm font-medium leading-6 text-white">
+                          {formatSessionTitle(sessionItem, index)}
+                        </p>
+                        <span className="shrink-0 rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-400">
+                          #{index + 1}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-400">
+                        {sessionItem.last_message_at
+                          ? `最近活跃 ${formatMessageTime(sessionItem.last_message_at)}`
+                          : '尚未开始对话'}
+                      </p>
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
+                  还没有任何会话。
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800 px-4 py-4">
+            <button
+              type="button"
+              onClick={onLogout}
+              className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
+            >
+              退出登录
+            </button>
+          </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col px-4 py-4 sm:px-6 sm:py-5 lg:px-7">
-          <div className="mx-auto flex w-full max-w-[1100px] flex-1 flex-col rounded-[2rem] border border-white/10 bg-[rgba(255,248,241,0.04)] shadow-[0_30px_120px_rgba(0,0,0,0.24)] backdrop-blur">
-            <header className="flex items-center justify-between border-b border-white/8 px-5 py-4 sm:px-6">
-              <div>
-                <p className="font-mono text-[0.62rem] uppercase tracking-[0.3em] text-emerald-100/70">
-                  FitMind Chat
-                </p>
-                <h2 className="mt-2 text-[1.15rem] text-stone-100 sm:text-[1.3rem]">
-                  今天想记录什么？
+        <section className="flex min-h-0 flex-1 flex-col">
+          <header className="shrink-0 border-b border-slate-800 bg-slate-950/85 px-5 py-4 backdrop-blur">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-semibold text-white">
+                  {activeSession ? formatSessionTitle(activeSession, 0) : '正在准备会话'}
                 </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  {activeSession
+                    ? '消息会持续写入当前会话，并自动带上最近历史。'
+                    : '请选择一个会话开始对话。'}
+                </p>
               </div>
-
-              <div className="hidden items-center gap-3 rounded-full border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-stone-300 sm:flex">
-                <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,0.9)]" />
-                {connectionState}
-              </div>
-            </header>
-
-            <div ref={viewportRef} className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-              <div className="mx-auto flex max-w-[860px] flex-col gap-4">
-                {messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={
-                      message.role === 'assistant'
-                        ? 'chat-message chat-message-assistant'
-                        : 'chat-message chat-message-user'
-                    }
-                  >
-                    {message.title && (
-                      <p className="font-mono text-[0.62rem] uppercase tracking-[0.28em] text-stone-400">
-                        {message.title}
-                      </p>
-                    )}
-                    <p className="mt-2 text-[0.98rem] leading-7 text-current">
-                      {message.content}
-                    </p>
-                    {message.streaming && (
-                      <div className="mt-3 flex items-center gap-2">
-                        <span className="chat-dot" />
-                        <span className="chat-dot [animation-delay:120ms]" />
-                        <span className="chat-dot [animation-delay:240ms]" />
-                      </div>
-                    )}
-                  </article>
-                ))}
+              <div className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300">
+                <span className={`h-2.5 w-2.5 rounded-full ${sending ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                <span>{connectionState}</span>
               </div>
             </div>
+          </header>
 
-            <footer className="border-t border-white/8 px-4 py-4 sm:px-6">
-              <div className="mx-auto flex max-w-[860px] flex-col gap-3">
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  {quickPrompts.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() => handleSend(prompt)}
-                      className="chat-prompt-chip"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
+          <div className="min-h-0 flex-1 overflow-y-auto bg-slate-950/40 px-4 py-5 sm:px-6 app-scrollbar">
+            <div
+              ref={viewportRef}
+              className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4"
+            >
+              {loadingMessages ? (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
+                  正在加载当前会话...
                 </div>
+              ) : (
+                messages.map((message) => {
+                  const meta = roleMeta(message.role)
+                  const isUser = message.role === 'user'
+                  const isSystem = message.role === 'system'
 
-                {errorMessage && (
-                  <div className="chat-status-error">
-                    {errorMessage}
-                  </div>
-                )}
+                  return (
+                    <article
+                      key={message.id}
+                      className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`w-full max-w-3xl rounded-3xl border px-4 py-4 shadow-sm sm:px-5 ${
+                          isUser
+                            ? 'border-emerald-500/30 bg-emerald-500/10'
+                            : isSystem
+                              ? 'border-amber-400/25 bg-amber-400/10'
+                              : 'border-slate-800 bg-slate-900'
+                        }`}
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold ${
+                                meta.badge === 'user'
+                                  ? 'bg-emerald-500/20 text-emerald-200'
+                                  : meta.badge === 'system'
+                                    ? 'bg-amber-400/20 text-amber-100'
+                                    : 'bg-slate-800 text-slate-100'
+                              }`}
+                            >
+                              {meta.label}
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium text-white">{meta.label}</p>
+                              <p className="text-xs text-slate-400">
+                                {formatMessageTime(message.createdAt) || (message.streaming ? '生成中' : '')}
+                              </p>
+                            </div>
+                          </div>
+                          {message.streaming ? (
+                            <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">
+                              输出中
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-100">
+                          {message.content}
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })
+              )}
+            </div>
+          </div>
 
-                <div className="chat-composer">
+          <footer className="shrink-0 border-t border-slate-800 bg-slate-950 px-4 py-4 sm:px-6">
+            <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+              {errorMessage ? (
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                  {errorMessage}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2">
+                {quickPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => handleSend(prompt)}
+                    className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-3 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                   <textarea
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
-                    placeholder="例如：今天练腿，深蹲 5 组，状态不错，晚饭吃了牛肉和米饭。"
-                    className="min-h-[88px] flex-1 resize-none bg-transparent text-[0.98rem] leading-7 text-stone-100 outline-none placeholder:text-stone-400"
+                    onKeyDown={handleComposerKeyDown}
+                    placeholder="输入今天的训练、饮食或身体状态。按 Enter 发送，Shift + Enter 换行。"
+                    rows={3}
+                    className="min-h-[104px] flex-1 resize-none rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-slate-500"
                   />
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-stone-400">
-                      本轮对话会实时发送到 Agent，并落入对话日志。
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => handleSend()}
-                      disabled={sending}
-                      className="shine-button shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {sending ? '流式生成中...' : '发送记录'}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSend()}
+                    disabled={sending || !draft.trim() || !activeSession}
+                    className="inline-flex h-12 shrink-0 items-center justify-center rounded-2xl bg-slate-100 px-5 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-[120px]"
+                  >
+                    {sending ? '发送中...' : '发送'}
+                  </button>
                 </div>
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  当前消息会写入选中的 session，并自动带上该会话最近的历史上下文。
+                </p>
               </div>
-            </footer>
-          </div>
+            </div>
+          </footer>
         </section>
       </div>
     </main>

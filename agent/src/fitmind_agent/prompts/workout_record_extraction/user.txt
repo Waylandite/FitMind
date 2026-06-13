@@ -1,0 +1,10 @@
+当前日期：
+{{current_date}}
+
+上一版训练记录草稿 JSON：
+{{previous_draft}}
+
+用户最新输入：
+{{user_query}}
+
+请输出修正后的训练记录草稿 JSON。
