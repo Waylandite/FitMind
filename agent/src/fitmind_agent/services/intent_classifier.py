@@ -8,6 +8,7 @@ from fitmind_agent.schemas.intent import IntentRecognitionResult
 from fitmind_agent.schemas.intent import KeywordIntentMatch
 from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.prompt_loader import PromptLoader
+from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 
 
 INTENT_KEYWORDS: dict[IntentCode, tuple[str, ...]] = {
@@ -174,11 +175,12 @@ class IntentClassifier:
         )
 
         try:
-            raw_content = self.llm_service.generate_text(
-                user_text=user_prompt,
-                system_prompt=system_prompt,
-                temperature=0.0,
-            )
+            with TokenUsageTracker.scoped(workflow="intent", node_name="intent_classifier"):
+                raw_content = self.llm_service.generate_text(
+                    user_text=user_prompt,
+                    system_prompt=system_prompt,
+                    temperature=0.0,
+                )
             parsed = self._parse_json_object(raw_content)
             intent = parsed.get("intent")
             confidence = float(parsed.get("confidence", 0.0))

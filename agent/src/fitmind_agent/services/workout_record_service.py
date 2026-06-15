@@ -16,6 +16,7 @@ from fitmind_agent.schemas.workout import WorkoutRecordDraftPayload
 from fitmind_agent.schemas.workout import WorkoutRecordWorkflowResult
 from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.prompt_loader import PromptLoader
+from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 
 
 CONFIRM_KEYWORDS = ("确认", "可以", "没问题", "保存", "落库", "对的", "没错", "好的")
@@ -169,11 +170,12 @@ class WorkoutRecordService:
             previous_draft=json.dumps(previous_draft or {}, ensure_ascii=False),
             user_query=user_query,
         )
-        raw_content = self.llm_service.generate_text(
-            user_text=user_prompt,
-            system_prompt=system_prompt,
-            temperature=0.0,
-        )
+        with TokenUsageTracker.scoped(workflow="workout_record", node_name="workout_record_extraction"):
+            raw_content = self.llm_service.generate_text(
+                user_text=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.0,
+            )
         parsed = self._parse_json_object(raw_content)
         return WorkoutRecordDraftPayload.model_validate(parsed)
 

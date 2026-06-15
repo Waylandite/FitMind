@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
+from sqlalchemy import Boolean
 from sqlalchemy import CheckConstraint
 from sqlalchemy import Date
 from sqlalchemy import DateTime
@@ -55,10 +56,15 @@ class User(Base, TimestampMixin):
     body_status_records: Mapped[list[UserBodyStatusRecord]] = relationship(back_populates="user")
     conversation_logs: Mapped[list[ConversationLog]] = relationship(back_populates="user")
     intent_recognition_logs: Mapped[list[IntentRecognitionLog]] = relationship(back_populates="user")
+    llm_call_logs: Mapped[list[LLMCallLog]] = relationship(back_populates="user")
+    chat_turn_token_usages: Mapped[list[ChatTurnTokenUsage]] = relationship(back_populates="user")
     defined_memories: Mapped[list[UserDefinedMemory]] = relationship(back_populates="user")
     derived_memories: Mapped[list[AgentDerivedMemory]] = relationship(back_populates="user")
     chat_sessions: Mapped[list[ChatSession]] = relationship(back_populates="user")
     workout_record_drafts: Mapped[list[WorkoutRecordDraft]] = relationship(back_populates="user")
+    nutrition_record_drafts: Mapped[list[NutritionRecordDraft]] = relationship(back_populates="user")
+    body_status_record_drafts: Mapped[list[BodyStatusRecordDraft]] = relationship(back_populates="user")
+    workout_plan_drafts: Mapped[list[WorkoutPlanDraft]] = relationship(back_populates="user")
 
 
 class UserProfile(Base, TimestampMixin):
@@ -196,6 +202,39 @@ class WorkoutRecordDraft(Base, TimestampMixin):
     workout_record: Mapped[UserWorkoutRecord | None] = relationship()
 
 
+class WorkoutPlanDraft(Base, TimestampMixin):
+    __tablename__ = "workout_plan_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'superseded')",
+            name="chk_workout_plan_drafts_status",
+        ),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="chk_workout_plan_drafts_confidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_payload: Mapped[dict | None] = mapped_column(JSON)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    workout_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_workout_plans.id", ondelete="SET NULL")
+    )
+    remark: Mapped[str | None] = mapped_column(Text)
+
+    user: Mapped[User] = relationship(back_populates="workout_plan_drafts")
+    session: Mapped[ChatSession | None] = relationship()
+    workout_plan: Mapped[UserWorkoutPlan | None] = relationship()
+
+
 class UserNutritionRecord(Base, TimestampMixin):
     __tablename__ = "user_nutrition_records"
     __table_args__ = (
@@ -215,6 +254,71 @@ class UserNutritionRecord(Base, TimestampMixin):
     conversation_logs: Mapped[list[ConversationLog]] = relationship(
         back_populates="nutrition_record"
     )
+
+
+class NutritionRecordDraft(Base, TimestampMixin):
+    __tablename__ = "nutrition_record_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'superseded')",
+            name="chk_nutrition_record_drafts_status",
+        ),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="chk_nutrition_record_drafts_confidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_payload: Mapped[dict | None] = mapped_column(JSON)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    nutrition_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_nutrition_records.id", ondelete="SET NULL")
+    )
+
+    user: Mapped[User] = relationship(back_populates="nutrition_record_drafts")
+    session: Mapped[ChatSession | None] = relationship()
+    nutrition_record: Mapped[UserNutritionRecord | None] = relationship()
+
+
+class BodyStatusRecordDraft(Base, TimestampMixin):
+    __tablename__ = "body_status_record_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'cancelled', 'superseded')",
+            name="chk_body_status_record_drafts_status",
+        ),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="chk_body_status_record_drafts_confidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    draft_payload: Mapped[dict | None] = mapped_column(JSON)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    body_status_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_body_status_records.id", ondelete="SET NULL")
+    )
+    remark: Mapped[str | None] = mapped_column(Text)
+
+    user: Mapped[User] = relationship(back_populates="body_status_record_drafts")
+    session: Mapped[ChatSession | None] = relationship()
+    body_status_record: Mapped[UserBodyStatusRecord | None] = relationship()
 
 
 class UserBodyStatusRecord(Base, TimestampMixin):
@@ -337,6 +441,69 @@ class IntentRecognitionLog(Base):
     session: Mapped[ChatSession | None] = relationship()
 
 
+class LLMCallLog(Base):
+    __tablename__ = "llm_call_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "usage_source IN ('provider', 'estimated', 'unavailable')",
+            name="chk_llm_call_logs_usage_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    thread_id: Mapped[str | None] = mapped_column(String(100))
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    workflow: Mapped[str | None] = mapped_column(String(80))
+    node_name: Mapped[str | None] = mapped_column(String(100))
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="deepseek")
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_stream: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer)
+    cached_tokens: Mapped[int | None] = mapped_column(Integer)
+    usage_source: Mapped[str] = mapped_column(String(30), nullable=False, default="provider")
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    raw_usage: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped[User | None] = relationship(back_populates="llm_call_logs")
+    session: Mapped[ChatSession | None] = relationship(back_populates="llm_call_logs")
+
+
+class ChatTurnTokenUsage(Base, TimestampMixin):
+    __tablename__ = "chat_turn_token_usage"
+    __table_args__ = (
+        UniqueConstraint("request_id", name="uq_chat_turn_token_usage_request_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    thread_id: Mapped[str | None] = mapped_column(String(100))
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="SET NULL")
+    )
+    intent_type: Mapped[str | None] = mapped_column(String(80))
+    total_prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_breakdown: Mapped[dict | None] = mapped_column(JSON)
+
+    user: Mapped[User | None] = relationship(back_populates="chat_turn_token_usages")
+    session: Mapped[ChatSession | None] = relationship(back_populates="chat_turn_token_usages")
+
+
 class UserDefinedMemory(Base, TimestampMixin):
     __tablename__ = "user_defined_memories"
     __table_args__ = (
@@ -386,6 +553,8 @@ class ChatSession(Base, TimestampMixin):
 
     user: Mapped[User] = relationship(back_populates="chat_sessions")
     conversation_logs: Mapped[list[ConversationLog]] = relationship(back_populates="session")
+    llm_call_logs: Mapped[list[LLMCallLog]] = relationship(back_populates="session")
+    chat_turn_token_usages: Mapped[list[ChatTurnTokenUsage]] = relationship(back_populates="session")
     summaries: Mapped[list[ChatSessionSummary]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )

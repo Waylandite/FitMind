@@ -68,9 +68,9 @@ LLM 被要求只输出 JSON，例如：
 | `today_workout_record` | 当日训练记录 | `workout_record_writer` | `workout` | `ready` | 已支持训练数据提取、草稿确认、多轮修正、确认后写入训练记录表 |
 | `recent_workout_summary` | 最近训练情况总结 | `workout_summary_agent` | `query` | `placeholder` | 仅完成意图识别和路由，业务模块待实现 |
 | `today_workout_recommendation` | 当日训练计划推荐 | `workout_recommendation_agent` | `plan` | `placeholder` | 仅完成意图识别和路由，业务模块待实现 |
-| `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` | `nutrition` | `ready` | 已支持饮食解析、今日上下文填充、ReAct 工具接入预留和饮食表落库 |
+| `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` | `nutrition` | `ready` | 已支持 LangGraph ReAct 营养 loop、今日上下文填充、草稿确认和饮食表落库 |
 | `today_body_status_record` | 当日睡眠和身体状态记录 | `body_status_writer` | `body_status` | `ready` | 已支持睡眠、疲劳、酸痛、体重、情绪等解析和身体状态表落库 |
-| `user_workout_plan_update` | 用户健身计划更新 | `workout_plan_updater` | `plan` | `placeholder` | 仅完成意图识别和路由，业务模块待实现 |
+| `user_workout_plan_update` | 用户健身计划更新 | `workout_plan_updater` | `plan` | `ready` | 已接入长期训练计划提取、草稿确认和增量入库模块 |
 | `general_chat` | 普通对话 | `general_chat` | `query` | `ready` | 已支持普通 LLM 对话、多轮上下文、session summary 上下文 |
 | `unknown` | 未知或信息不足 | `clarification_agent` | `query` | `placeholder` | 仅完成意图识别和路由，澄清追问模块待实现 |
 
@@ -102,20 +102,22 @@ LLM 被要求只输出 JSON，例如：
 当最终意图是 `today_nutrition_record` 时，系统会进入饮食记录工作流：
 
 1. 读取数据库中当天已有的饮食记录，作为 LLM 上下文
-2. 构建 `nutrition_tool_context`，预留 MCP/工具调用结果
-3. 调用饮食记录抽取 Prompt
-4. 自动填充 `record_date`
-5. 将饮食内容写入 `user_nutrition_records`
-6. 如果当天已有记录，新输入会追加到 `raw_text`，并保留写入时间
-7. 饮食估算字段表示“今天截至目前”的累计值，由 LLM 结合已有上下文和工具结果重新分析后非空覆盖
-8. 当前 ReAct 工具注册表已预留，后续可以接入 MCP 食物营养查询、份量估算和营养汇总工具
+2. 启动 `NutritionLangGraphReActRunner`
+3. LLM 在 `llm_decide` 节点自主选择工具或输出最终 JSON
+4. `tool_execute` 节点通过 MCP-ready provider 执行营养工具并回写 observation
+5. 自动填充 `record_date`
+6. 创建 `nutrition_record_drafts` 草稿，等待用户确认
+7. 用户确认后才写入正式饮食表
+8. 如果当天已有记录，新输入会追加到 `raw_text`，并保留写入时间
+9. 饮食估算字段表示“今天截至目前”的累计值，由 ReAct loop 结合已有上下文重新分析后非空覆盖
+10. 后续可以继续接入外部 MCP 食物营养查询、份量估算和营养汇总工具
 
 相关文件：
 
 - `agent/src/fitmind_agent/services/nutrition_record_service.py`
 - `agent/src/fitmind_agent/services/nutrition_react_tools.py`
 - `agent/src/fitmind_agent/repositories/nutrition.py`
-- `agent/src/fitmind_agent/prompts/nutrition_record_extraction/`
+- `agent/src/fitmind_agent/prompts/nutrition_react_loop/`
 
 ### 5.3 当日睡眠和身体状态记录
 
@@ -135,7 +137,24 @@ LLM 被要求只输出 JSON，例如：
 - `agent/src/fitmind_agent/repositories/nutrition.py`
 - `agent/src/fitmind_agent/prompts/body_status_record_extraction/`
 
-### 5.4 普通对话
+### 5.4 用户长期训练计划更新
+
+当最终意图是 `user_workout_plan_update` 时，系统会进入训练计划更新工作流：
+
+1. 调用训练计划提取 Prompt
+2. 从用户自然语言中提取计划标题、日期、内容和备注
+3. 创建 `workout_plan_drafts` 草稿
+4. 邀请用户确认
+5. 支持用户继续修正或取消
+6. 用户确认后写入 `user_workout_plans`
+
+相关文件：
+
+- `agent/src/fitmind_agent/services/workout_plan_service.py`
+- `agent/src/fitmind_agent/repositories/workout.py`
+- `agent/src/fitmind_agent/prompts/workout_plan_update_extraction/`
+
+### 5.5 普通对话
 
 当最终意图是 `general_chat`，或业务模块尚未接入时，当前系统会进入普通 LLM 对话流程。
 
@@ -205,13 +224,13 @@ limit 20;
 
 推荐按以下顺序继续补齐业务模块：
 
-1. `user_workout_plan_update`
-2. `recent_workout_summary`
-3. `today_workout_recommendation`
-4. `unknown` 对应的澄清追问模块
+1. `recent_workout_summary` — 最近训练情况总结
+2. `today_workout_recommendation` — 当日训练计划推荐
+3. `unknown` 对应的澄清追问模块
+
+`user_workout_plan_update` 已完成实现。
 
 原因：
 
-- 计划更新会影响后续推荐和总结
 - 总结和推荐更依赖前面积累的结构化数据
 - 澄清追问可以最后统一抽象为通用能力

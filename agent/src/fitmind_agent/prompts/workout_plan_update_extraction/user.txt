@@ -1,0 +1,10 @@
+当前日期：
+{{current_date}}
+
+上一版草稿：
+{{previous_draft}}
+
+用户输入：
+{{user_query}}
+
+请输出长期训练计划更新 JSON。

@@ -18,3 +18,4 @@ class LLMChatResponse(BaseModel):
     model: str
     content: str
     raw_response: dict
+    usage: dict | None = None

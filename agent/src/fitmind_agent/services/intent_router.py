@@ -29,7 +29,7 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         intent="today_nutrition_record",
         module_name="nutrition_record_react_writer",
         db_intent_type="nutrition",
-        description="已接入饮食记录解析、ReAct 工具接入预留和落库模块。",
+        description="已接入饮食记录解析、本地 ReAct 营养工具、草稿确认和落库模块。",
         status="ready",
     ),
     "today_body_status_record": IntentModuleRoute(
@@ -43,7 +43,8 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         intent="user_workout_plan_update",
         module_name="workout_plan_updater",
         db_intent_type="plan",
-        description="待接入用户长期健身计划更新模块。",
+        description="已接入用户长期训练计划更新、草稿确认和增量入库模块。",
+        status="ready",
     ),
     "general_chat": IntentModuleRoute(
         intent="general_chat",

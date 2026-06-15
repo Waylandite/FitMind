@@ -104,7 +104,7 @@ FitMind 的记忆系统不建议只做一张通用 `memory` 表。
 
 ## 3. 第一版核心表清单
 
-当前版本推荐保留以下 14 张核心表：
+当前版本推荐保留以下 20 张核心表：
 
 1. `users`
 2. `user_profiles`
@@ -114,12 +114,17 @@ FitMind 的记忆系统不建议只做一张通用 `memory` 表。
 6. `user_nutrition_records`
 7. `user_body_status_records`
 8. `conversation_logs`
-9. `user_defined_memories`
-10. `agent_derived_memories`
-11. `chat_sessions`
-12. `chat_session_summaries`
-13. `workout_record_drafts`
-14. `intent_recognition_logs`
+9. `intent_recognition_logs`
+10. `user_defined_memories`
+11. `agent_derived_memories`
+12. `chat_sessions`
+13. `chat_session_summaries`
+14. `workout_record_drafts`
+15. `workout_plan_drafts`
+16. `nutrition_record_drafts`
+17. `body_status_record_drafts`
+18. `llm_call_logs`
+19. `chat_turn_token_usage`
 
 ---
 
@@ -127,26 +132,37 @@ FitMind 的记忆系统不建议只做一张通用 `memory` 表。
 
 ```text
 users
-  -> user_profiles
-  -> user_workout_plans
-  -> user_workout_records
-  -> user_nutrition_records
-  -> user_body_status_records
-  -> conversation_logs
-  -> intent_recognition_logs
-  -> user_defined_memories
-  -> agent_derived_memories
-  -> chat_sessions
+  → user_profiles
+  → user_workout_plans
+  → user_workout_records
+  → user_nutrition_records
+  → user_body_status_records
+  → conversation_logs
+  → intent_recognition_logs
+  → user_defined_memories
+  → agent_derived_memories
+  → chat_sessions
+  → llm_call_logs
+  → chat_turn_token_usage
+  → workout_record_drafts
+  → workout_plan_drafts
+  → nutrition_record_drafts
+  → body_status_record_drafts
 
 user_workout_records
-  -> user_workout_record_items
-  <- workout_record_drafts
+  → user_workout_record_items
+  ← workout_record_drafts
 
 chat_sessions
-  -> chat_session_summaries
-  -> conversation_logs
-  -> intent_recognition_logs
-  -> workout_record_drafts
+  → chat_session_summaries
+  → conversation_logs
+  → intent_recognition_logs
+  → llm_call_logs
+  → chat_turn_token_usage
+  → workout_record_drafts
+  → workout_plan_drafts
+  → nutrition_record_drafts
+  → body_status_record_drafts
 ```
 
 ---
@@ -352,6 +368,43 @@ chat_sessions
 - 用户确认前不写入正式训练记录
 - 用户多轮修正时更新同一条 pending draft
 
+### `workout_plan_drafts`
+
+用途：
+
+- 保存 Agent 从对话中提取出来、但尚未经过用户确认的训练计划结构化 JSON
+- 支撑"提取 → 用户确认/修正 → 正式落库"的多轮流程
+
+字段建议：
+
+- `id`
+- `user_id`
+- `session_id`
+- `status`
+- `raw_text`
+- `draft_payload`
+- `confidence_score`
+- `confirmed_at`
+- `workout_plan_id`
+- `remark`
+- `created_at`
+- `updated_at`
+
+字段说明：
+
+- `draft_payload`
+  保存待确认训练计划 JSON，包括标题、日期、计划内容、来源、状态等
+- `status`
+  建议值：`pending`, `confirmed`, `cancelled`, `superseded`
+- `workout_plan_id`
+  用户确认后，关联正式写入的 `user_workout_plans.id`
+
+说明：
+
+- 这张表不是最终业务记录表，只是确认流程状态表
+- 用户确认前不写入正式训练计划
+- 用户多轮修正时更新同一条 pending draft
+
 ---
 
 ## 5.5 用户训练日志明细表
@@ -439,6 +492,36 @@ chat_sessions
 - 当前已预留 ReAct / MCP 工具接入，用于后续更准确计算热量、蛋白、碳水和脂肪
 - 后续如果需要拆成早餐/午餐/晚餐明细，可再新增子表
 
+### `nutrition_record_drafts`
+
+用途：
+
+- 保存 Agent 从对话中通过 ReAct loop 提取出、但尚未经过用户确认的饮食记录结构化 JSON
+- 支撑"提取 → 用户确认/修正 → 正式落库"的多轮流程
+
+字段建议：
+
+- `id`
+- `user_id`
+- `session_id`
+- `status`
+- `raw_text`
+- `draft_payload`
+- `confidence_score`
+- `confirmed_at`
+- `nutrition_record_id`
+- `created_at`
+- `updated_at`
+
+字段说明：
+
+- `draft_payload`
+  保存待确认饮食记录 JSON，包括当天累计热量、蛋白、碳水、脂肪估算等
+- `status`
+  建议值：`pending`, `confirmed`, `cancelled`, `superseded`
+- `nutrition_record_id`
+  用户确认后，关联正式写入的 `user_nutrition_records.id`
+
 ---
 
 ## 5.7 用户睡眠身体状态表
@@ -470,7 +553,38 @@ chat_sessions
 - 第一版允许结构化字段和原文同时存在
 - 同一天内多次身体状态记录会追加到 `raw_text`，并保留写入时间
 - 结构化字段保存当天最新非空快照
-- 如果用户只说“今天状态一般，腿有点酸”，也可以只保存 `raw_text`
+- 如果用户只说"今天状态一般，腿有点酸"，也可以只保存 `raw_text`
+
+### `body_status_record_drafts`
+
+用途：
+
+- 保存 Agent 从对话中提取出、但尚未经过用户确认的身体状态记录结构化 JSON
+- 支撑"提取 → 用户确认/修正 → 正式落库"的多轮流程
+
+字段建议：
+
+- `id`
+- `user_id`
+- `session_id`
+- `status`
+- `raw_text`
+- `draft_payload`
+- `confidence_score`
+- `confirmed_at`
+- `body_status_record_id`
+- `remark`
+- `created_at`
+- `updated_at`
+
+字段说明：
+
+- `draft_payload`
+  保存待确认身体状态 JSON，包括睡眠时长、疲劳、压力、酸痛、体重、情绪等
+- `status`
+  建议值：`pending`, `confirmed`, `cancelled`, `superseded`
+- `body_status_record_id`
+  用户确认后，关联正式写入的 `user_body_status_records.id`
 
 ---
 
@@ -735,6 +849,90 @@ chat_sessions
 
 ---
 
+## 5.14 LLM 调用日志表
+
+### `llm_call_logs`
+
+用途：
+
+- 记录每一次真实 LLM 模型调用
+- 一次用户对话可能包含多次调用（意图识别、营养 ReAct 决策、草稿提取、普通聊天回复、summary 压缩）
+
+字段建议：
+
+- `id`
+- `request_id`
+- `user_id`
+- `thread_id`
+- `session_id`
+- `workflow`
+- `node_name`
+- `provider`
+- `model`
+- `is_stream`
+- `prompt_tokens`
+- `completion_tokens`
+- `total_tokens`
+- `reasoning_tokens`
+- `cached_tokens`
+- `usage_source`
+- `latency_ms`
+- `success`
+- `error_message`
+- `raw_usage`
+- `created_at`
+
+字段说明：
+
+- `request_id`
+  一轮用户对话的链路 ID
+- `workflow`
+  业务链路，例如 `intent`、`nutrition_record`、`chat`、`summary`
+- `node_name`
+  具体节点，例如 `intent_classifier`、`generate_text`、`chat_stream`
+- `usage_source`
+  建议值：`provider`, `estimated`, `unavailable`
+- `raw_usage`
+  供应商返回的原始 usage JSON
+
+---
+
+## 5.15 对话轮次 Token 汇总表
+
+### `chat_turn_token_usage`
+
+用途：
+
+- 记录一轮用户对话的聚合 token 消耗
+- 按 `request_id` 汇总 `llm_call_logs`
+
+字段建议：
+
+- `id`
+- `request_id`
+- `user_id`
+- `thread_id`
+- `session_id`
+- `intent_type`
+- `total_prompt_tokens`
+- `total_completion_tokens`
+- `total_tokens`
+- `llm_call_count`
+- `model_breakdown`
+- `created_at`
+- `updated_at`
+
+字段说明：
+
+- `request_id`
+  一轮对话 ID，唯一
+- `model_breakdown`
+  按模型聚合的 JSON
+- `intent_type`
+  本轮最终意图类型
+
+---
+
 ## 6. 推荐索引
 
 ### 用户相关
@@ -788,6 +986,22 @@ chat_sessions
 - unique(`chat_sessions.user_id`, `thread_id`, `session_no`)
 - index(`chat_sessions.user_id`, `status`, `last_message_at`)
 - index(`chat_session_summaries.session_id`, `summary_type`, `summary_version`)
+
+### 草稿相关
+
+- index(`workout_record_drafts.user_id`, `session_id`, `status`)
+- index(`workout_record_drafts.status`, `created_at`)
+- index(`workout_plan_drafts.user_id`, `session_id`, `status`)
+- index(`nutrition_record_drafts.user_id`, `session_id`, `status`)
+- index(`body_status_record_drafts.user_id`, `session_id`, `status`)
+
+### Token 统计相关
+
+- index(`llm_call_logs.request_id`)
+- index(`llm_call_logs.user_id`, `created_at`)
+- index(`llm_call_logs.workflow`, `created_at`)
+- index(`chat_turn_token_usage.user_id`, `created_at`)
+- index(`chat_turn_token_usage.intent_type`, `created_at`)
 
 ---
 
@@ -892,21 +1106,35 @@ V1 落库方式：
 6. `user_nutrition_records`
 7. `user_body_status_records`
 8. `conversation_logs`
-9. `user_defined_memories`
-10. `agent_derived_memories`
-11. `chat_sessions`
-12. `chat_session_summaries`
+9. `intent_recognition_logs`
+10. `user_defined_memories`
+11. `agent_derived_memories`
+12. `chat_sessions`
+13. `chat_session_summaries`
+14. `workout_record_drafts`
+15. `workout_plan_drafts`
+16. `nutrition_record_drafts`
+17. `body_status_record_drafts`
+18. `llm_call_logs`
+19. `chat_turn_token_usage`
+
+注：表 14-17 为草稿确认流程的必要支撑；表 18-19 为 Token 统计旁路系统。
+
+所有表已通过 Alembic migration 在当前版本中建表完成。
 
 ---
 
 ## 9. 当前版本的特点
 
-这一版相对之前数据库设计有四个明确变化：
+这一版相对之前数据库设计有以下关键变化：
 
 1. 不再以复杂的 Agent 审计表为中心。
 2. 不再强制把训练计划拆成周计划或动作计划。
 3. 先通过 `raw_text + 少量结构化字段` 的方式快速落地。
 4. 正式引入三层记忆体系，而不是只保存对话原文。
+5. 引入草稿确认机制，所有业务写入先走 draft 表，用户确认后再落正式表。
+6. 新增意图识别日志表，支撑意图分类质量评估。
+7. 新增 Token 统计旁路系统，记录每次 LLM 调用和每轮对话的 token 消耗。
 
 这样更适合 FitMind 第一版产品。
 

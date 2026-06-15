@@ -195,70 +195,36 @@ FitMind 推荐采用：
 
 ---
 
-## 6. 推荐的 Agent 设计
+## 6. 当前架构
 
-FitMind 不建议把每个能力都做成独立对话角色，而应该把“对用户说话”收敛为一个入口 Agent，把“内部分析”拆成多个子 Agent。
+FitMind V1 的实际架构已演变为 **顺序服务链** 模式，详见 [agent-architecture.md](agent-architecture.md)。
 
-### 6.1 顶层 Agent
+核心流程：
 
-#### `FitMind Supervisor`
+```
+用户消息 → IntentClassifier (关键词 + LLM) → IntentRouter (路由) →
+  ServiceChain (NutritionRecordService → BodyStatusRecordService →
+  WorkoutRecordService → WorkoutPlanService) → fallback 对话
+```
 
-职责：
+设计要点：
 
-- 接收用户消息
-- 识别是记录类请求、修改类请求还是查询类请求
-- 判断是否需要调用一个或多个领域子 Agent
-- 维护当前会话目标
-- 决定是继续追问、请求确认，还是进入写库
+- 用 `IntentClassifier` + `IntentRouter` 取代 Supervisor/Subagent 编排
+- 用 `maybe_handle()` 模式实现领域 Service 的优先级路由
+- 所有业务写入经过 **草稿确认机制**（extract → draft → confirm → persist）
+- 营养链路使用 LangGraph ReAct 循环驱动工具调用
 
-输入：
+### 6.1 已实现的领域 Service
 
-- 用户当前消息
-- 今日上下文
-- 最近会话记忆
-- 未完成确认事项
+| Service | 意图 | 能力 |
+| --- | --- | --- |
+| `WorkoutRecordService` | `today_workout_record` | 训练记录提取、草稿确认、动作明细落库 |
+| `NutritionRecordService` | `today_nutrition_record` | 饮食记录 ReAct 提取、营养工具调用、累计估算 |
+| `BodyStatusRecordService` | `today_body_status_record` | 睡眠/疲劳/酸痛/体重/情绪解析 |
+| `WorkoutPlanService` | `user_workout_plan_update` | 长期训练计划提取和更新 |
 
-输出：
+### 6.2 待实现的模块
 
-- 当前意图分类
-- 需要调用的子 Agent 列表
-- 对用户的下一步动作
-
-### 6.2 子 Agent
-
-#### `Workout Plan Agent`
-
-负责从自然语言中抽取训练计划：
-
-- 训练部位
-- 动作列表
-- 每个动作的计划组数/次数/重量
-- 有氧项目、距离、时长、配速
-- 计划训练强度
-
-#### `Workout Result Agent`
-
-负责抽取最终完成情况：
-
-- 实际完成的动作与组次
-- 是否完成原计划
-- 中途删减、替换、加练
-- 主观强度、疲劳、掉速、失败组
-
-#### `Condition Agent`
-
-负责抽取身体状态：
-
-- 睡眠质量
-- 疲劳程度
-- 酸痛部位
-- 精神状态
-- 受伤/不适风险
-
-#### `Nutrition Agent`
-
-负责抽取饮食记录：
-
-- 餐次
-- 食物条目
-- 份量描述
+- `recent_workout_summary` — 已预留路由，业务逻辑待实现
+- `today_workout_recommendation` — 已预留路由，业务逻辑待实现
+- `unknown` 澄清追问 — 已预留路由，业务逻辑待实现

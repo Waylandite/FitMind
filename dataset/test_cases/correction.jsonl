@@ -1,0 +1,9 @@
+// FitMind Agent 纠错理解测试用例
+// 测试能力: C-06 correction_agent
+// 评估模式: fuzzy — 目标识别、字段识别、值提取三方面
+
+{"test_id":"COR-001","category":"correction","subcategory":"happy_path","input":"把刚才的卧推改成55kg","expected":{"facts":[{"fact_type":"correction","raw_text":"卧推改成55kg","normalized_payload":{"target_exercise":"卧推","field_to_change":"weight_kg","new_value":55,"reason":"weight_correction"}}]},"evaluation_mode":"fuzzy","tags":["weight_correction","simple"]}
+{"test_id":"COR-002","category":"correction","subcategory":"happy_path","input":"不对，深蹲是80kg不是60kg","expected":{"facts":[{"fact_type":"correction","raw_text":"深蹲是80kg不是60kg","normalized_payload":{"target_exercise":"深蹲","field_to_change":"weight_kg","old_value":60,"new_value":80,"reason":"weight_correction"}}]},"evaluation_mode":"fuzzy","tags":["weight_correction","explicit_old_new"]}
+{"test_id":"COR-003","category":"correction","subcategory":"edge_case","input":"我说错了，今天不是练胸是练背","expected":{"facts":[{"fact_type":"correction","raw_text":"不是练胸是练背","normalized_payload":{"field_to_change":"session_name","old_value":"胸","new_value":"背","reason":"session_correction"}}]},"evaluation_mode":"fuzzy","tags":["session_correction","topic_switch"]}
+{"test_id":"COR-004","category":"correction","subcategory":"edge_case","input":"刚才忘说了，练完还做了10分钟拉伸","expected":{"facts":[{"fact_type":"supplement","raw_text":"10分钟拉伸","normalized_payload":{"exercise_name":"拉伸","duration_minutes":10,"reason":"supplement_to_previous_record"}}]},"evaluation_mode":"fuzzy","notes":"这是补充遗漏而非纠正。Agent 应识别为 addendum 而非 correction。","tags":["supplement","not_correction"]}
+{"test_id":"COR-005","category":"correction","subcategory":"edge_case","input":"把刚才的记录全删了重新来","expected":{"facts":[{"fact_type":"correction","raw_text":"全删了重新来","normalized_payload":{"action":"delete_all_recent","reason":"restart_recording"}}]},"evaluation_mode":"fuzzy","notes":"破坏性操作，按架构规范应触发确认门控。","tags":["delete_all","confirmation_required"]}

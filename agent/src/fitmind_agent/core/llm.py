@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from functools import cached_property
+import time
+from typing import Any
 
 from openai import OpenAI
 
@@ -9,6 +11,7 @@ from fitmind_agent.core.config import get_settings
 from fitmind_agent.schemas.llm import LLMChatRequest
 from fitmind_agent.schemas.llm import LLMChatResponse
 from fitmind_agent.schemas.llm import LLMMessage
+from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 
 
 class LLMConfigurationError(RuntimeError):
@@ -52,28 +55,61 @@ class DeepSeekLLMClient:
         return OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def chat(self, request: LLMChatRequest) -> LLMChatResponse:
-        response = self.client.chat.completions.create(
-            model=request.model or self.default_model,
-            messages=[message.model_dump() for message in request.messages],
-            temperature=(
-                request.temperature
-                if request.temperature is not None
-                else self.default_temperature
-            ),
-        )
+        started_at = time.perf_counter()
+        model = request.model or self.default_model
+        messages = [message.model_dump() for message in request.messages]
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else self.default_temperature
+                ),
+            )
+        except Exception as exc:
+            TokenUsageTracker.record_call(
+                provider="deepseek",
+                model=model,
+                is_stream=False,
+                started_at=started_at,
+                usage=self._estimate_usage(messages=messages, output_text=""),
+                success=False,
+                error_message=str(exc),
+            )
+            raise
 
         content = response.choices[0].message.content or ""
+        usage = self._extract_usage(response.model_dump()) or self._estimate_usage(
+            messages=messages,
+            output_text=content,
+        )
+        TokenUsageTracker.record_call(
+            provider="deepseek",
+            model=response.model or model,
+            is_stream=False,
+            started_at=started_at,
+            usage=usage,
+            success=True,
+        )
 
         return LLMChatResponse(
             model=response.model,
             content=content,
             raw_response=response.model_dump(),
+            usage=usage,
         )
 
     def stream_chat(self, request: LLMChatRequest) -> Iterator[tuple[str, str | None]]:
+        started_at = time.perf_counter()
+        model = request.model or self.default_model
+        messages = [message.model_dump() for message in request.messages]
+        output_parts: list[str] = []
+        usage: dict[str, Any] | None = None
         stream = self.client.chat.completions.create(
-            model=request.model or self.default_model,
-            messages=[message.model_dump() for message in request.messages],
+            model=model,
+            messages=messages,
             temperature=(
                 request.temperature
                 if request.temperature is not None
@@ -82,15 +118,39 @@ class DeepSeekLLMClient:
             stream=True,
         )
 
-        model_name = request.model or self.default_model
-        for chunk in stream:
-            model_name = getattr(chunk, "model", None) or model_name
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            content = getattr(delta, "content", None)
-            if content:
-                yield content, model_name
+        model_name = model
+        try:
+            for chunk in stream:
+                chunk_dump = chunk.model_dump() if hasattr(chunk, "model_dump") else {}
+                usage = self._extract_usage(chunk_dump) or usage
+                model_name = getattr(chunk, "model", None) or model_name
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
+                    output_parts.append(content)
+                    yield content, model_name
+        except Exception as exc:
+            TokenUsageTracker.record_call(
+                provider="deepseek",
+                model=model_name,
+                is_stream=True,
+                started_at=started_at,
+                usage=usage or self._estimate_usage(messages=messages, output_text="".join(output_parts)),
+                success=False,
+                error_message=str(exc),
+            )
+            raise
+        else:
+            TokenUsageTracker.record_call(
+                provider="deepseek",
+                model=model_name,
+                is_stream=True,
+                started_at=started_at,
+                usage=usage or self._estimate_usage(messages=messages, output_text="".join(output_parts)),
+                success=True,
+            )
 
     def chat_text(
         self,
@@ -114,6 +174,33 @@ class DeepSeekLLMClient:
             )
         )
         return result.content
+
+    @staticmethod
+    def _extract_usage(raw_response: dict[str, Any]) -> dict[str, Any] | None:
+        usage = raw_response.get("usage")
+        if isinstance(usage, dict) and usage:
+            return usage
+        return None
+
+    @classmethod
+    def _estimate_usage(cls, *, messages: list[dict[str, Any]], output_text: str) -> dict[str, Any]:
+        prompt_text = "\n".join(str(message.get("content") or "") for message in messages)
+        prompt_tokens = cls._estimate_token_count(prompt_text)
+        completion_tokens = cls._estimate_token_count(output_text)
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "estimated": True,
+        }
+
+    @staticmethod
+    def _estimate_token_count(text: str) -> int:
+        if not text:
+            return 0
+        cjk_chars = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+        non_cjk_chars = max(len(text) - cjk_chars, 0)
+        return max(cjk_chars + (non_cjk_chars + 3) // 4, 1)
 
 
 YunwuLLMClient = DeepSeekLLMClient

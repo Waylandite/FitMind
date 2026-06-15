@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from fitmind_agent.db.models import UserWorkoutRecord
 from fitmind_agent.db.models import UserWorkoutRecordItem
+from fitmind_agent.db.models import UserWorkoutPlan
+from fitmind_agent.db.models import WorkoutPlanDraft
 from fitmind_agent.db.models import WorkoutRecordDraft
 
 
@@ -50,6 +52,72 @@ class WorkoutRecordDraftRepository:
         self.session.commit()
         self.session.refresh(draft)
         return draft
+
+
+class WorkoutPlanDraftRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, data: Mapping[str, Any]) -> WorkoutPlanDraft:
+        draft = WorkoutPlanDraft(**dict(data))
+        self.session.add(draft)
+        self.session.commit()
+        self.session.refresh(draft)
+        return draft
+
+    def get_latest_pending(self, user_id: int, session_id: int | None) -> WorkoutPlanDraft | None:
+        stmt = (
+            select(WorkoutPlanDraft)
+            .where(
+                WorkoutPlanDraft.user_id == user_id,
+                WorkoutPlanDraft.status == "pending",
+            )
+            .order_by(WorkoutPlanDraft.id.desc())
+            .limit(1)
+        )
+        if session_id is None:
+            stmt = stmt.where(WorkoutPlanDraft.session_id.is_(None))
+        else:
+            stmt = stmt.where(WorkoutPlanDraft.session_id == session_id)
+        return self.session.scalar(stmt)
+
+    def update(self, draft: WorkoutPlanDraft, data: Mapping[str, Any]) -> WorkoutPlanDraft:
+        for key, value in data.items():
+            setattr(draft, key, value)
+        self.session.add(draft)
+        self.session.commit()
+        self.session.refresh(draft)
+        return draft
+
+
+class WorkoutPlanRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_plan(
+        self,
+        *,
+        user_id: int,
+        title: str | None,
+        plan_date: date | None,
+        raw_text: str,
+        source: str = "manual",
+        status: str = "active",
+        remark: str | None = None,
+    ) -> UserWorkoutPlan:
+        plan = UserWorkoutPlan(
+            user_id=user_id,
+            title=title,
+            plan_date=plan_date,
+            raw_text=raw_text,
+            source=source,
+            status=status,
+            remark=remark,
+        )
+        self.session.add(plan)
+        self.session.commit()
+        self.session.refresh(plan)
+        return plan
 
 
 class WorkoutRecordRepository:

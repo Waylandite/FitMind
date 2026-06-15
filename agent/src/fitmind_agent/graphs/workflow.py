@@ -1,12 +1,19 @@
+"""Deprecated placeholder — not used in current architecture.
+
+The actual intent classification and routing is handled by:
+  services/intent_classifier.py  — keyword rules + LLM classification
+  services/intent_router.py      — intent → module routing table
+  services/chat_service.py       — sequential service chain orchestration
+
+This file is kept as a historical reference only.
+"""
+
 from fitmind_agent.graphs.state import AgentState
 
 
 def run_workflow(state: AgentState) -> AgentState:
     """
-    Placeholder workflow.
-
-    Later this will be replaced by a LangGraph StateGraph that routes
-    plan/training/nutrition/body-status inputs into dedicated nodes.
+    Deprecated placeholder — replaced by IntentClassifier + IntentRouter.
     """
     message = state.get("message", "")
     lowered = message.lower()

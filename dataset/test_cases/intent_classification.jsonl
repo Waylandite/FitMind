@@ -1,0 +1,12 @@
+// FitMind Agent 意图分类测试用例
+// 测试能力: C-01 意图路由
+// 评估模式: exact — 预测的 intent_type 必须与期望完全一致
+
+{"test_id":"INT-001","category":"intent_classification","subcategory":"happy_path","input":"今天练胸，卧推60kg 5x5，上斜哑铃推举4组12次","expected":{"intent_type":"workout"},"evaluation_mode":"exact","tags":["single_intent","exercise_weight_sets_reps"]}
+{"test_id":"INT-002","category":"intent_classification","subcategory":"happy_path","input":"今晚吃了牛排，土豆泥，西兰花，还喝了蛋白粉","expected":{"intent_type":"nutrition"},"evaluation_mode":"exact","tags":["single_intent","food_items","supplement"]}
+{"test_id":"INT-003","category":"intent_classification","subcategory":"happy_path","input":"昨晚睡了7小时，今天精神状态还可以，腿有点酸","expected":{"intent_type":"body_status"},"evaluation_mode":"exact","tags":["single_intent","sleep","soreness"]}
+{"test_id":"INT-004","category":"intent_classification","subcategory":"happy_path","input":"这周计划练三天，周一胸，周三背，周五腿","expected":{"intent_type":"plan"},"evaluation_mode":"exact","tags":["single_intent","weekly_plan"]}
+{"test_id":"INT-005","category":"intent_classification","subcategory":"happy_path","input":"把刚才的卧推改成55kg，不是60kg","expected":{"intent_type":"correction"},"evaluation_mode":"exact","tags":["single_intent","weight_correction"]}
+{"test_id":"INT-006","category":"intent_classification","subcategory":"happy_path","input":"回顾一下最近三天的训练情况","expected":{"intent_type":"query"},"evaluation_mode":"exact","tags":["single_intent","review"]}
+{"test_id":"INT-007","category":"intent_classification","subcategory":"edge_case","input":"今天天气不错","expected":{"intent_type":"unknown"},"evaluation_mode":"exact","tags":["no_fitness_content","irrelevant"]}
+{"test_id":"INT-008","category":"intent_classification","subcategory":"edge_case","input":"睡觉前吃了蛋白粉","expected":{"intent_type":"nutrition"},"evaluation_mode":"exact","notes":"包含'睡'关键词但实际意图是饮食。分类器应正确识别核心意图而非被边缘关键词误导。","tags":["cross_domain_keyword","sleep_vs_nutrition"]}

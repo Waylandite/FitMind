@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const quickPrompts = [
-  '记录今天的训练计划',
-  '补一条饮食记录',
-  '总结今天的状态',
-  '回顾最近三天训练',
+  '记录今天的腿部训练和有氧',
+  '补充午餐、晚餐与蛋白质摄入',
+  '回顾最近 7 天的体重变化',
+  '总结这周恢复情况和睡眠质量',
+]
+
+const profileHighlights = [
+  { label: '身高', value: '176 cm' },
+  { label: '体重', value: '71.8 kg' },
+  { label: '目标', value: '减脂并保持力量' },
+]
+
+const memoryPreferences = [
+  { label: '训练记忆', value: '优先记住动作、组数、RPE 和完成感受。' },
+  { label: '身体状态', value: '持续追踪体重、睡眠时长、疲劳和恢复节奏。' },
+  { label: '饮食习惯', value: '偏高蛋白、工作日快记录，允许后补热量估算。' },
 ]
 
 const apiBaseUrl =
@@ -16,7 +28,7 @@ const defaultSystemPrompt =
 const emptyAssistantCard = {
   id: 'starter-assistant',
   role: 'assistant',
-  content: '新的会话已经创建。现在可以直接告诉我你的训练、饮食或身体状态。',
+  content: '新的会话已经创建。现在可以直接告诉我你的训练、饮食、睡眠或身体状态。',
 }
 
 function parseSseBuffer(buffer, onEvent) {
@@ -49,14 +61,120 @@ function parseSseBuffer(buffer, onEvent) {
 
 function roleMeta(role) {
   if (role === 'user') {
-    return { label: '我', badge: 'user' }
+    return { label: '你', badge: 'user' }
   }
 
   if (role === 'system') {
     return { label: '系统', badge: 'system' }
   }
 
-  return { label: 'AI', badge: 'assistant' }
+  return { label: 'FitMind', badge: 'assistant' }
+}
+
+function workflowLabel(workflow) {
+  const labels = {
+    nutrition_record: '饮食记录草稿',
+    body_status_record: '身体状态草稿',
+    workout_record: '训练记录草稿',
+    workout_plan_update: '长期训练计划草稿',
+  }
+
+  return labels[workflow] ?? '记录草稿'
+}
+
+function formatJsonForEdit(value) {
+  if (!value) {
+    return ''
+  }
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function buildDraftCorrectionPrefill(event) {
+  if (event.draft_actions?.correction_prefill) {
+    return event.draft_actions.correction_prefill
+  }
+
+  const source = event.payload ?? event.draft ?? {}
+  return `请修改这条${workflowLabel(event.workflow)}，下面是当前提取结果：\n${formatJsonForEdit(source)}`
+}
+
+function buildDraftCardFromWorkflow(event) {
+  if (!['draft_created', 'draft_updated'].includes(event.action) || !event.draft_actions) {
+    return null
+  }
+
+  return {
+    id: `${event.workflow}-${event.draft_id ?? Date.now()}`,
+    workflow: event.workflow,
+    draftId: event.draft_id,
+    label: event.draft_actions.label ?? workflowLabel(event.workflow),
+    hint:
+      event.draft_actions.hint ??
+      `请确认这条${workflowLabel(event.workflow)}：可以直接保存、取消，或点击纠正错误后修改内容再发送。`,
+    confirmText: event.draft_actions.confirm_text ?? '确认保存',
+    cancelText: event.draft_actions.cancel_text ?? '取消保存',
+    correctionText: event.draft_actions.correction_text ?? '纠正错误',
+    correctionPrefill: buildDraftCorrectionPrefill(event),
+    payload: event.payload ?? event.draft ?? null,
+  }
+}
+
+function buildDraftPreview(card) {
+  if (!card?.payload) {
+    return '草稿已生成，等待你的确认。'
+  }
+
+  const payload = card.payload
+  if (card.workflow === 'nutrition_record') {
+    const items = payload.nutrition?.items ?? []
+    if (items.length > 0) {
+      return items
+        .map((item) => {
+          const amount = item.amount_g ? `${item.amount_g}g` : '份量待确认'
+          const calories = item.calories_kcal ? ` · ${item.calories_kcal}kcal` : ''
+          return `${item.food_name ?? '食物'} ${amount}${calories}`
+        })
+        .join('；')
+    }
+    return payload.nutrition?.raw_text ?? payload.summary_text ?? '饮食草稿已生成。'
+  }
+
+  if (card.workflow === 'body_status_record') {
+    const body = payload.body_status ?? {}
+    const parts = [
+      body.sleep_hours ? `睡眠 ${body.sleep_hours}h` : '',
+      body.fatigue_level ? `疲劳 ${body.fatigue_level}/10` : '',
+      body.soreness_level ? `酸痛 ${body.soreness_level}/10` : '',
+      body.body_weight_kg ? `体重 ${body.body_weight_kg}kg` : '',
+      body.mood ? `情绪 ${body.mood}` : '',
+    ].filter(Boolean)
+    return parts.join('；') || body.raw_text || payload.summary_text || '身体状态草稿已生成。'
+  }
+
+  if (card.workflow === 'workout_record') {
+    const exercises = payload.exercises ?? []
+    if (exercises.length > 0) {
+      return exercises
+        .map((item) =>
+          [item.exercise_name, item.sets_count ? `${item.sets_count}组` : '', item.reps_text, item.weight_text]
+            .filter(Boolean)
+            .join(' · '),
+        )
+        .join('；')
+    }
+    return payload.summary_text ?? '训练草稿已生成。'
+  }
+
+  if (card.workflow === 'workout_plan_update') {
+    return [payload.title, payload.raw_text].filter(Boolean).join('：') || payload.summary_text || '计划草稿已生成。'
+  }
+
+  return formatJsonForEdit(payload)
 }
 
 function formatSessionTitle(sessionItem, index) {
@@ -76,6 +194,15 @@ function buildThreadId(userId) {
   return `session-${userId}-${randomPart}`
 }
 
+function buildMessageId(prefix) {
+  const randomPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  return `${prefix}-${randomPart}`
+}
+
 function formatMessageTime(value) {
   if (!value) {
     return ''
@@ -92,6 +219,272 @@ function formatMessageTime(value) {
   }).format(date)
 }
 
+function normalizeDayStart(dateLike) {
+  const date = new Date(dateLike)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function groupSessionsByDate(sessions) {
+  const now = normalizeDayStart(new Date())
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const pastWeek = new Date(now)
+  pastWeek.setDate(pastWeek.getDate() - 7)
+
+  const groups = {
+    今天: [],
+    昨天: [],
+    '过去 7 天': [],
+    更早: [],
+  }
+
+  sessions.forEach((sessionItem, index) => {
+    const basis = sessionItem.last_message_at ?? sessionItem.updated_at ?? sessionItem.created_at
+    const date = basis ? normalizeDayStart(basis) : null
+    const item = { ...sessionItem, _index: index }
+
+    if (!date) {
+      groups.更早.push(item)
+      return
+    }
+
+    if (date.getTime() === now.getTime()) {
+      groups.今天.push(item)
+      return
+    }
+
+    if (date.getTime() === yesterday.getTime()) {
+      groups.昨天.push(item)
+      return
+    }
+
+    if (date >= pastWeek) {
+      groups['过去 7 天'].push(item)
+      return
+    }
+
+    groups.更早.push(item)
+  })
+
+  return Object.entries(groups).filter(([, items]) => items.length > 0)
+}
+
+async function createSessionRecordForUser(userId) {
+  const response = await fetch(`${apiBaseUrl}/memories/sessions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      thread_id: buildThreadId(userId),
+      title: '新的会话',
+      status: 'active',
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`创建会话失败: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+function SkeletonMessage({ lines = 3 }) {
+  return (
+    <div className="flex gap-4 py-4">
+      <div className="skeleton-shimmer h-9 w-9 shrink-0 rounded-full" />
+      <div className="min-w-0 flex-1 space-y-3">
+        <div className="skeleton-shimmer h-4 w-24 rounded-full" />
+        {Array.from({ length: lines }).map((_, index) => (
+          <div
+            key={index}
+            className="skeleton-shimmer h-4 rounded-full"
+            style={{ width: `${index === lines - 1 ? 68 : 100}%` }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SessionSection({
+  groups,
+  activeSessionId,
+  handleSelectSession,
+  loadingSessions,
+  sending,
+}) {
+  if (loadingSessions) {
+    return (
+      <div className="space-y-4">
+        <div className="skeleton-shimmer h-4 w-16 rounded-full" />
+        <div className="space-y-3">
+          <div className="skeleton-shimmer h-16 rounded-[1.5rem]" />
+          <div className="skeleton-shimmer h-16 rounded-[1.5rem]" />
+          <div className="skeleton-shimmer h-16 rounded-[1.5rem]" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!groups.length) {
+    return <p className="text-sm text-[var(--text-soft)]">还没有任何会话。</p>
+  }
+
+  return groups.map(([label, items]) => (
+    <section key={label}>
+      <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.26em] text-[var(--text-faint)]">
+        {label}
+      </p>
+      <div className="space-y-2">
+        {items.map((sessionItem) => {
+          const isActive = sessionItem.id === activeSessionId
+
+          return (
+            <button
+              key={sessionItem.id}
+              type="button"
+              onClick={() => handleSelectSession(sessionItem.id)}
+              disabled={sending}
+              className={`block w-full rounded-[1.35rem] px-4 py-3 text-left transition-all duration-300 ${
+                isActive
+                  ? 'bg-[rgba(79,140,255,0.08)] text-[var(--text)]'
+                  : 'text-[var(--text-soft)] hover:bg-[rgba(41,51,80,0.04)] hover:text-[var(--text)]'
+              }`}
+            >
+              <p className="line-clamp-2 text-sm font-semibold leading-6">
+                {formatSessionTitle(sessionItem, sessionItem._index)}
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-faint)]">
+                {sessionItem.last_message_at
+                  ? `最近活跃 ${formatMessageTime(sessionItem.last_message_at)}`
+                  : '尚未开始对话'}
+              </p>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  ))
+}
+
+function DraftActionCard({ card, disabled, onAction }) {
+  if (!card) {
+    return null
+  }
+
+  return (
+    <div className="mt-4 rounded-[1.4rem] border border-[rgba(74,91,137,0.1)] bg-[rgba(255,255,255,0.72)] p-4 shadow-[0_14px_38px_rgba(92,105,148,0.08)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+            Draft Review
+          </p>
+          <h3 className="mt-1 text-base font-semibold text-[var(--text)]">{card.label}</h3>
+        </div>
+        {card.resolvedLabel ? (
+          <span className="rounded-full bg-[rgba(119,199,176,0.12)] px-3 py-1 text-xs font-semibold text-[#3f8f79]">
+            {card.resolvedLabel}
+          </span>
+        ) : card.draftId ? (
+          <span className="rounded-full bg-[rgba(79,140,255,0.08)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+            #{card.draftId}
+          </span>
+        ) : null}
+      </div>
+
+      <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-sm leading-7 text-[var(--text-soft)]">
+        {buildDraftPreview(card)}
+      </p>
+      <p className="mt-3 text-xs leading-6 text-[var(--text-faint)]">{card.hint}</p>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onAction('confirm', card)}
+          className="rounded-full bg-[linear-gradient(135deg,#5f89ff,#76d0b5)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(98,134,255,0.2)] transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          {card.confirmText}
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onAction('cancel', card)}
+          className="rounded-full bg-[rgba(215,99,99,0.08)] px-4 py-2 text-sm font-semibold text-[var(--danger)] transition-all duration-300 hover:bg-[rgba(215,99,99,0.12)] disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          {card.cancelText}
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onAction('correct', card)}
+          className="rounded-full bg-[rgba(33,52,48,0.06)] px-4 py-2 text-sm font-semibold text-[var(--text)] transition-all duration-300 hover:bg-[rgba(33,52,48,0.1)] disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          {card.correctionText}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function HourglassLoader() {
+  return (
+    <span className="hourglass-flow" aria-hidden="true">
+      <span className="hourglass-flow__glass">⌛</span>
+      <span className="hourglass-flow__sand" />
+    </span>
+  )
+}
+
+function MessageRow({ message, sending, onDraftAction }) {
+  const meta = roleMeta(message.role)
+  const isStreamingAssistant = message.role === 'assistant' && message.streaming
+
+  return (
+    <article className={`grid grid-cols-[2.5rem_minmax(0,1fr)] gap-4 py-5 ${isStreamingAssistant ? 'streaming-rise' : ''}`}>
+      <div
+        className={`mt-1 flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${
+          message.role === 'user'
+            ? 'bg-[rgba(80,113,255,0.08)] text-[var(--accent)]'
+            : message.role === 'system'
+              ? 'bg-[rgba(255,197,124,0.12)] text-[#bc7a28]'
+              : 'bg-[linear-gradient(135deg,rgba(124,92,255,0.1),rgba(93,181,255,0.14),rgba(126,214,173,0.14))] text-[#5168ff]'
+        }`}
+      >
+        {message.role === 'assistant' ? '✦' : meta.label.slice(0, 1)}
+      </div>
+
+      <div className="min-w-0">
+        <div className="flex items-center gap-3">
+          <p className="text-sm font-semibold text-[var(--text)]">{meta.label}</p>
+          <p className="text-xs text-[var(--text-faint)]">
+            {formatMessageTime(message.createdAt) || (message.streaming ? '生成中' : '')}
+          </p>
+          {message.streaming ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-[var(--text-faint)]">
+              <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
+              <HourglassLoader />
+              正在生成
+            </span>
+          ) : null}
+        </div>
+
+        <div className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-8 tracking-[0.005em] text-[var(--text)] sm:text-[16px]">
+          {message.content}
+        </div>
+        <DraftActionCard
+          card={message.draftCard}
+          disabled={sending || Boolean(message.draftCard?.resolvedLabel)}
+          onAction={(action, card) => onDraftAction(action, card, message.id)}
+        />
+      </div>
+    </article>
+  )
+}
+
 function ChatWorkspace({ session, onLogout }) {
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState([])
@@ -103,7 +496,11 @@ function ChatWorkspace({ session, onLogout }) {
   const [creatingSession, setCreatingSession] = useState(false)
   const [connectionState, setConnectionState] = useState('已连接')
   const [errorMessage, setErrorMessage] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const viewportRef = useRef(null)
+  const composerRef = useRef(null)
   const assistantMessageIdRef = useRef(null)
   const userId = session.userId ?? 1
 
@@ -111,6 +508,8 @@ function ChatWorkspace({ session, onLogout }) {
     () => sessions.find((item) => item.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   )
+
+  const groupedSessions = useMemo(() => groupSessionsByDate(sessions), [sessions])
 
   useEffect(() => {
     if (!viewportRef.current) {
@@ -122,6 +521,16 @@ function ChatWorkspace({ session, onLogout }) {
       behavior: 'smooth',
     })
   }, [messages, sending])
+
+  useEffect(() => {
+    if (!composerRef.current) {
+      return
+    }
+
+    composerRef.current.style.height = '0px'
+    const nextHeight = Math.min(composerRef.current.scrollHeight, 184)
+    composerRef.current.style.height = `${Math.max(nextHeight, 28)}px`
+  }, [draft])
 
   useEffect(() => {
     let cancelled = false
@@ -144,7 +553,7 @@ function ChatWorkspace({ session, onLogout }) {
         if (records.length > 0) {
           setActiveSessionId(records[0].id)
         } else {
-          const created = await createSessionRecord()
+          const created = await createSessionRecordForUser(userId)
           if (!cancelled && created) {
             setSessions([created])
             setActiveSessionId(created.id)
@@ -219,27 +628,6 @@ function ChatWorkspace({ session, onLogout }) {
     }
   }, [activeSessionId])
 
-  const createSessionRecord = async () => {
-    const response = await fetch(`${apiBaseUrl}/memories/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        thread_id: buildThreadId(userId),
-        title: '新的会话',
-        status: 'active',
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`创建会话失败: ${response.status}`)
-    }
-
-    return response.json()
-  }
-
   const refreshSessions = async (nextActiveId = activeSessionId) => {
     const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
     if (!response.ok) {
@@ -264,11 +652,12 @@ function ChatWorkspace({ session, onLogout }) {
     setErrorMessage('')
 
     try {
-      const created = await createSessionRecord()
+      const created = await createSessionRecordForUser(userId)
       setSessions((current) => [created, ...current])
       setActiveSessionId(created.id)
       setMessages([emptyAssistantCard])
       setConnectionState('新会话已创建')
+      setSidebarOpen(false)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '创建会话失败')
     } finally {
@@ -283,6 +672,7 @@ function ChatWorkspace({ session, onLogout }) {
 
     setActiveSessionId(sessionId)
     setConnectionState('已切换会话')
+    setSidebarOpen(false)
   }
 
   const handleSend = async (prefill) => {
@@ -295,13 +685,13 @@ function ChatWorkspace({ session, onLogout }) {
     setErrorMessage('')
 
     const userMessage = {
-      id: `user-${Date.now()}`,
+      id: buildMessageId('user'),
       role: 'user',
       content: text,
       createdAt: new Date().toISOString(),
     }
 
-    const assistantId = `assistant-${Date.now()}`
+    const assistantId = buildMessageId('assistant')
     assistantMessageIdRef.current = assistantId
 
     setMessages((current) => {
@@ -347,6 +737,95 @@ function ChatWorkspace({ session, onLogout }) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
+      let streamFinished = false
+
+      const handleStreamEvent = (event) => {
+        if (!assistantMessageIdRef.current) {
+          return
+        }
+
+        if (event.type === 'intent') {
+          const percent = Math.round((event.confidence ?? 0) * 100)
+          setConnectionState(`意图 ${event.intent ?? 'unknown'} · ${percent}%`)
+          return
+        }
+
+        if (event.type === 'session') {
+          setConnectionState(`会话 ${event.session_id} 已连接`)
+          return
+        }
+
+        if (event.type === 'workflow') {
+          const draftCard = buildDraftCardFromWorkflow(event)
+          if (draftCard) {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantMessageIdRef.current
+                  ? {
+                      ...message,
+                      draftCard,
+                    }
+                  : message,
+              ),
+            )
+          }
+          return
+        }
+
+        if (event.type === 'delta') {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageIdRef.current
+                ? {
+                    ...message,
+                    content: `${message.content}${event.content ?? ''}`,
+                    streaming: true,
+                  }
+                : message,
+            ),
+          )
+          return
+        }
+
+        if (event.type === 'done') {
+          streamFinished = true
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageIdRef.current
+                ? {
+                    ...message,
+                    content: event.reply ?? message.content,
+                    streaming: false,
+                  }
+                : message,
+            ),
+          )
+          if (event.intent) {
+            const percent = Math.round((event.intent_confidence ?? 0) * 100)
+            setConnectionState(`已完成 · ${event.intent} · ${percent}%`)
+          } else {
+            setConnectionState(`已完成 · ${event.model ?? 'deepseek-v4-flash'}`)
+          }
+          return
+        }
+
+        if (event.type === 'error') {
+          streamFinished = true
+          setErrorMessage(event.message ?? '模型流返回错误')
+          setConnectionState('连接异常')
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageIdRef.current
+                ? {
+                    ...message,
+                    content: message.content || '本次请求未成功完成，请稍后重试。',
+                    streaming: false,
+                  }
+                : message,
+            ),
+          )
+        }
+      }
 
       while (true) {
         const { value, done } = await reader.read()
@@ -355,74 +834,28 @@ function ChatWorkspace({ session, onLogout }) {
         }
 
         buffer += decoder.decode(value, { stream: true })
-        buffer = parseSseBuffer(buffer, (event) => {
-          if (!assistantMessageIdRef.current) {
-            return
-          }
+        buffer = parseSseBuffer(buffer, handleStreamEvent)
+      }
 
-          if (event.type === 'intent') {
-            const percent = Math.round((event.confidence ?? 0) * 100)
-            setConnectionState(`意图 ${event.intent ?? 'unknown'} · ${percent}%`)
-            return
-          }
+      buffer += decoder.decode()
+      if (buffer.trim()) {
+        parseSseBuffer(`${buffer}\n\n`, handleStreamEvent)
+      }
 
-          if (event.type === 'session') {
-            setConnectionState(`会话 ${event.session_id} 已连接`)
-            return
-          }
-
-          if (event.type === 'delta') {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantMessageIdRef.current
-                  ? {
-                      ...message,
-                      content: `${message.content}${event.content ?? ''}`,
-                      streaming: true,
-                    }
-                  : message,
-              ),
-            )
-            return
-          }
-
-          if (event.type === 'done') {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantMessageIdRef.current
-                  ? {
-                      ...message,
-                      content: event.reply ?? message.content,
-                      streaming: false,
-                    }
-                  : message,
-              ),
-            )
-            if (event.intent) {
-              const percent = Math.round((event.intent_confidence ?? 0) * 100)
-              setConnectionState(`已完成 · ${event.intent} · ${percent}%`)
-            } else {
-              setConnectionState(`已完成 · ${event.model ?? 'deepseek-v4-flash'}`)
-            }
-            return
-          }
-
-          if (event.type === 'error') {
-            setErrorMessage(event.message ?? '模型流返回错误')
-            setConnectionState('连接异常')
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantMessageIdRef.current
-                  ? {
-                      ...message,
-                      content: message.content || '本次请求未成功完成，请稍后重试。',
-                      streaming: false,
-                    }
-                  : message,
-              ),
-            )
-          }
-        })
+      if (!streamFinished) {
+        setErrorMessage('本次对话流提前结束，后端没有返回完整结果。')
+        setConnectionState('连接中断')
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessageIdRef.current
+              ? {
+                  ...message,
+                  content: message.content || '本次请求在业务处理过程中中断，请稍后重试。',
+                  streaming: false,
+                }
+              : message,
+          ),
+        )
       }
 
       await refreshSessions(activeSession.id)
@@ -447,6 +880,70 @@ function ChatWorkspace({ session, onLogout }) {
     }
   }
 
+  const handleDraftAction = (action, card, messageId) => {
+    if (sending || !card) {
+      return
+    }
+
+    if (action === 'confirm') {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                draftCard: {
+                  ...message.draftCard,
+                  resolvedLabel: '已提交确认',
+                  hint: '确认请求已发送，FitMind 正在写入记录。',
+                },
+              }
+            : message,
+        ),
+      )
+      handleSend(card.confirmText || '确认保存')
+      return
+    }
+
+    if (action === 'cancel') {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                draftCard: {
+                  ...message.draftCard,
+                  resolvedLabel: '已提交取消',
+                  hint: '取消请求已发送，FitMind 正在处理草稿状态。',
+                },
+              }
+            : message,
+        ),
+      )
+      handleSend(card.cancelText || '取消保存')
+      return
+    }
+
+    if (action === 'correct') {
+      setDraft(card.correctionPrefill || '')
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                draftCard: {
+                  ...message.draftCard,
+                  hint: '已把当前提取结果复制到输入框，你可以修改后发送。',
+                },
+              }
+            : message,
+        ),
+      )
+      requestAnimationFrame(() => {
+        composerRef.current?.focus()
+      })
+    }
+  }
+
   const handleComposerKeyDown = (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -454,223 +951,295 @@ function ChatWorkspace({ session, onLogout }) {
     }
   }
 
+  const closeOverlays = () => {
+    setSidebarOpen(false)
+    setSettingsOpen(false)
+    setProfileOpen(false)
+  }
+
   return (
-    <main className="min-h-screen bg-[#0b1020] text-slate-100">
-      <div className="mx-auto flex h-screen max-w-[1600px] flex-col xl:flex-row">
-        <aside className="flex h-[18rem] shrink-0 flex-col border-b border-slate-800 bg-slate-950 xl:h-screen xl:w-[320px] xl:border-b-0 xl:border-r">
-          <div className="border-b border-slate-800 px-5 py-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">
-                  FitMind
-                </p>
-                <h1 className="mt-2 text-xl font-semibold text-white">会话管理</h1>
-              </div>
+    <main className="relative min-h-screen overflow-hidden bg-[#fbfbfd] text-[var(--text)]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(126,150,255,0.08),transparent_28%),radial-gradient(circle_at_85%_20%,rgba(133,208,181,0.07),transparent_26%),linear-gradient(180deg,#fcfcfe_0%,#fbfbfd_100%)]" />
+
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className="fixed left-4 top-4 z-40 inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+        aria-label="打开历史记录"
+      >
+        <span className="flex flex-col gap-1.5">
+          <span className="block h-0.5 w-4 rounded-full bg-current" />
+          <span className="block h-0.5 w-4 rounded-full bg-current" />
+          <span className="block h-0.5 w-4 rounded-full bg-current" />
+        </span>
+      </button>
+
+      <div className="fixed right-4 top-4 z-40 sm:right-6 sm:top-5">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setProfileOpen((current) => !current)}
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[rgba(255,255,255,0.84)] text-sm font-semibold text-[var(--text)] shadow-[0_10px_30px_rgba(86,101,145,0.12)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5"
+          >
+            {session.name?.slice(0, 1) ?? 'F'}
+          </button>
+
+          <div
+            className={`absolute right-0 top-[calc(100%+0.8rem)] w-72 rounded-[1.6rem] bg-[rgba(255,255,255,0.92)] p-3 shadow-[0_20px_55px_rgba(88,99,137,0.16)] backdrop-blur-2xl transition-all duration-300 ${
+              profileOpen
+                ? 'pointer-events-auto translate-y-0 opacity-100'
+                : 'pointer-events-none -translate-y-2 opacity-0'
+            }`}
+          >
+            <div className="rounded-[1.25rem] bg-[linear-gradient(135deg,rgba(105,132,255,0.07),rgba(116,212,174,0.07))] px-4 py-4">
+              <p className="text-sm font-semibold text-[var(--text)]">{session.name}</p>
+              <p className="mt-1 text-xs text-[var(--text-faint)]">{session.identifier}</p>
+            </div>
+
+            <div className="mt-3 space-y-1">
               <button
                 type="button"
-                onClick={handleCreateSession}
-                disabled={creatingSession || sending}
-                className="inline-flex h-10 items-center rounded-xl bg-slate-100 px-4 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                onClick={() => {
+                  setSettingsOpen(true)
+                  setProfileOpen(false)
+                }}
+                className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--text)] transition-all duration-300 hover:bg-[rgba(52,74,140,0.05)]"
               >
-                {creatingSession ? '创建中' : '新会话'}
+                用户记忆设置
+              </button>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--danger)] transition-all duration-300 hover:bg-[rgba(215,99,99,0.06)]"
+              >
+                退出账号
               </button>
             </div>
-            <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-500">当前用户</p>
-              <p className="mt-2 text-base font-medium text-white">{session.name}</p>
-              <p className="mt-1 text-sm text-slate-400">{session.identifier}</p>
-            </div>
           </div>
+        </div>
+      </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 app-scrollbar">
-            <div className="space-y-3">
-              {loadingSessions ? (
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
-                  正在加载会话...
-                </div>
-              ) : sessions.length ? (
-                sessions.map((sessionItem, index) => {
-                  const isActive = sessionItem.id === activeSessionId
-                  return (
-                    <button
-                      key={sessionItem.id}
-                      type="button"
-                      onClick={() => handleSelectSession(sessionItem.id)}
-                      className={`block w-full rounded-2xl border px-4 py-4 text-left transition ${
-                        isActive
-                          ? 'border-slate-500 bg-slate-800 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]'
-                          : 'border-slate-800 bg-slate-900 hover:border-slate-700 hover:bg-slate-800'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="line-clamp-2 text-sm font-medium leading-6 text-white">
-                          {formatSessionTitle(sessionItem, index)}
-                        </p>
-                        <span className="shrink-0 rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-400">
-                          #{index + 1}
-                        </span>
-                      </div>
-                      <p className="mt-3 text-xs text-slate-400">
-                        {sessionItem.last_message_at
-                          ? `最近活跃 ${formatMessageTime(sessionItem.last_message_at)}`
-                          : '尚未开始对话'}
-                      </p>
-                    </button>
-                  )
-                })
-              ) : (
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
-                  还没有任何会话。
-                </div>
-              )}
+      <div
+        className={`fixed inset-0 z-30 bg-[rgba(28,34,51,0.14)] backdrop-blur-[2px] transition-all duration-300 ${
+          sidebarOpen || settingsOpen || profileOpen
+            ? 'pointer-events-auto opacity-100'
+            : 'pointer-events-none opacity-0'
+        }`}
+        onClick={closeOverlays}
+      />
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 w-[22rem] max-w-[calc(100vw-1.5rem)] transform bg-[rgba(255,255,255,0.86)] px-4 py-4 shadow-[0_22px_70px_rgba(74,87,129,0.12)] backdrop-blur-2xl transition-all duration-300 ease-in-out ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-[110%]'
+        }`}
+      >
+        <div className="flex h-full flex-col overflow-hidden rounded-[1.9rem] bg-[rgba(255,255,255,0.56)] px-3 py-3">
+          <div className="flex items-start justify-between gap-4 px-3 py-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
+                History
+              </p>
+              <h2 className="mt-2 font-display text-[2rem] leading-none tracking-[-0.045em] text-[var(--text)]">
+                健身记录
+              </h2>
             </div>
-          </div>
-
-          <div className="border-t border-slate-800 px-4 py-4">
             <button
               type="button"
-              onClick={onLogout}
-              className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
+              onClick={() => setSidebarOpen(false)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+              aria-label="关闭历史记录"
             >
-              退出登录
+              ×
             </button>
           </div>
-        </aside>
 
-        <section className="flex min-h-0 flex-1 flex-col">
-          <header className="shrink-0 border-b border-slate-800 bg-slate-950/85 px-5 py-4 backdrop-blur">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="truncate text-lg font-semibold text-white">
-                  {activeSession ? formatSessionTitle(activeSession, 0) : '正在准备会话'}
-                </h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  {activeSession
-                    ? '消息会持续写入当前会话，并自动带上最近历史。'
-                    : '请选择一个会话开始对话。'}
-                </p>
-              </div>
-              <div className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300">
-                <span className={`h-2.5 w-2.5 rounded-full ${sending ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                <span>{connectionState}</span>
-              </div>
+          <button
+            type="button"
+            onClick={handleCreateSession}
+            disabled={creatingSession || sending}
+            className="mx-3 mt-1 rounded-full bg-[linear-gradient(135deg,#648bff,#79d0b5)] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_26px_rgba(100,139,255,0.24)] transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {creatingSession ? '创建中...' : '新建对话'}
+          </button>
+
+          <div className="app-scrollbar mt-5 flex-1 space-y-5 overflow-y-auto px-3 pb-3">
+            <SessionSection
+              groups={groupedSessions}
+              activeSessionId={activeSessionId}
+              handleSelectSession={handleSelectSession}
+              loadingSessions={loadingSessions}
+              sending={sending}
+            />
+          </div>
+        </div>
+      </aside>
+
+      <aside
+        className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm transform bg-[rgba(255,255,255,0.88)] px-4 py-4 shadow-[-14px_0_50px_rgba(82,98,141,0.08)] backdrop-blur-2xl transition-all duration-300 ease-in-out ${
+          settingsOpen ? 'translate-x-0' : 'translate-x-[110%]'
+        }`}
+      >
+        <div className="flex h-full flex-col rounded-[1.9rem] bg-[rgba(255,255,255,0.58)] px-5 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
+                Memory
+              </p>
+              <h3 className="mt-2 font-display text-[2rem] leading-none tracking-[-0.045em] text-[var(--text)]">
+                用户记忆
+              </h3>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-soft)]">
+                让助手更准确地理解你的身体数据和长期目标。
+              </p>
             </div>
-          </header>
-
-          <div className="min-h-0 flex-1 overflow-y-auto bg-slate-950/40 px-4 py-5 sm:px-6 app-scrollbar">
-            <div
-              ref={viewportRef}
-              className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4"
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(false)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+              aria-label="关闭设置"
             >
-              {loadingMessages ? (
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400">
-                  正在加载当前会话...
-                </div>
-              ) : (
-                messages.map((message) => {
-                  const meta = roleMeta(message.role)
-                  const isUser = message.role === 'user'
-                  const isSystem = message.role === 'system'
-
-                  return (
-                    <article
-                      key={message.id}
-                      className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`w-full max-w-3xl rounded-3xl border px-4 py-4 shadow-sm sm:px-5 ${
-                          isUser
-                            ? 'border-emerald-500/30 bg-emerald-500/10'
-                            : isSystem
-                              ? 'border-amber-400/25 bg-amber-400/10'
-                              : 'border-slate-800 bg-slate-900'
-                        }`}
-                      >
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold ${
-                                meta.badge === 'user'
-                                  ? 'bg-emerald-500/20 text-emerald-200'
-                                  : meta.badge === 'system'
-                                    ? 'bg-amber-400/20 text-amber-100'
-                                    : 'bg-slate-800 text-slate-100'
-                              }`}
-                            >
-                              {meta.label}
-                            </span>
-                            <div>
-                              <p className="text-sm font-medium text-white">{meta.label}</p>
-                              <p className="text-xs text-slate-400">
-                                {formatMessageTime(message.createdAt) || (message.streaming ? '生成中' : '')}
-                              </p>
-                            </div>
-                          </div>
-                          {message.streaming ? (
-                            <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">
-                              输出中
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-100">
-                          {message.content}
-                        </div>
-                      </div>
-                    </article>
-                  )
-                })
-              )}
-            </div>
+              ×
+            </button>
           </div>
 
-          <footer className="shrink-0 border-t border-slate-800 bg-slate-950 px-4 py-4 sm:px-6">
-            <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-              {errorMessage ? (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                  {errorMessage}
-                </div>
-              ) : null}
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            {profileHighlights.map((item) => (
+              <div key={item.label} className="rounded-[1.2rem] bg-[rgba(85,104,170,0.04)] px-4 py-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                  {item.label}
+                </p>
+                <p className="mt-2 text-sm font-semibold text-[var(--text)]">{item.value}</p>
+              </div>
+            ))}
+          </div>
 
-              <div className="flex flex-wrap gap-2">
-                {quickPrompts.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => handleSend(prompt)}
-                    className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
-                  >
-                    {prompt}
-                  </button>
+          <div className="app-scrollbar mt-6 flex-1 space-y-3 overflow-y-auto pr-1">
+            {memoryPreferences.map((item) => (
+              <article key={item.label} className="rounded-[1.35rem] bg-[rgba(255,255,255,0.74)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                <p className="text-sm font-semibold text-[var(--text)]">{item.label}</p>
+                <p className="mt-2 text-sm leading-7 text-[var(--text-soft)]">{item.value}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </aside>
+
+      <section className="relative mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-5 pb-36 pt-24 sm:px-8 sm:pt-28">
+        <header className="mx-auto flex w-full max-w-[800px] items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--text-faint)]">
+              FitMind Console
+            </p>
+            <h1 className="mt-3 font-display text-[2.45rem] leading-[0.92] tracking-[-0.05em] text-[var(--text)] sm:text-[3.1rem]">
+              {activeSession ? formatSessionTitle(activeSession, 0) : '准备你的下一次记录'}
+            </h1>
+          </div>
+          <div className="hidden items-center gap-2 text-sm text-[var(--text-faint)] sm:flex">
+            <span className={`pulse-dot h-2 w-2 rounded-full ${sending ? 'bg-[var(--accent)]' : 'bg-[var(--mint)]'}`} />
+            <span>{connectionState}</span>
+          </div>
+        </header>
+
+        <div
+          ref={viewportRef}
+          className="app-scrollbar relative mt-8 flex-1 overflow-y-auto"
+        >
+          <div className="mx-auto w-full max-w-[800px] pb-20">
+            <div className="mb-8 flex flex-wrap gap-2">
+              {quickPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => handleSend(prompt)}
+                  className="rounded-full bg-[rgba(90,108,180,0.05)] px-4 py-2 text-sm text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(90,108,180,0.09)] hover:text-[var(--text)]"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
+            {loadingMessages ? (
+              <div className="space-y-3">
+                <SkeletonMessage lines={4} />
+                <SkeletonMessage lines={3} />
+                <SkeletonMessage lines={5} />
+              </div>
+            ) : (
+              <div className="divide-y divide-[rgba(37,48,83,0.05)]">
+                {messages.map((message) => (
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    sending={sending}
+                    onDraftAction={handleDraftAction}
+                  />
                 ))}
               </div>
+            )}
+          </div>
+        </div>
 
-              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-3 shadow-sm">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                  <textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={handleComposerKeyDown}
-                    placeholder="输入今天的训练、饮食或身体状态。按 Enter 发送，Shift + Enter 换行。"
-                    rows={3}
-                    className="min-h-[104px] flex-1 resize-none rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-slate-500"
-                  />
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-30 w-[min(920px,calc(100%-1.5rem))] -translate-x-1/2 sm:w-[min(920px,calc(100%-3rem))]">
+          <div className="mx-auto max-w-[860px]">
+            {errorMessage ? (
+              <div className="pointer-events-auto mb-3 rounded-[1.4rem] bg-[rgba(255,255,255,0.86)] px-4 py-3 text-sm text-[var(--danger)] shadow-[0_14px_35px_rgba(215,99,99,0.08)] backdrop-blur-xl">
+                {errorMessage}
+              </div>
+            ) : null}
+
+            <div className="pointer-events-auto rounded-[2rem] bg-[rgba(255,255,255,0.84)] px-4 py-3 shadow-[0_18px_50px_rgba(78,89,121,0.12)] backdrop-blur-2xl sm:px-5">
+              <div className="flex items-end gap-3">
+                <textarea
+                  ref={composerRef}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                  placeholder="记录今天的训练、饮食、睡眠或体重变化..."
+                  rows={1}
+                  className="max-h-[184px] min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 text-[15px] leading-7 text-[var(--text)] outline-none placeholder:text-[var(--text-faint)]"
+                />
+
+                <div className="mb-1 flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+                    aria-label="语音输入"
+                  >
+                    话
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+                    aria-label="上传图片"
+                  >
+                    图
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleSend()}
                     disabled={sending || !draft.trim() || !activeSession}
-                    className="inline-flex h-12 shrink-0 items-center justify-center rounded-2xl bg-slate-100 px-5 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-[120px]"
+                    className={`inline-flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold transition-all duration-300 ${
+                      sending || !draft.trim() || !activeSession
+                        ? 'bg-[rgba(96,110,150,0.08)] text-[var(--text-faint)]'
+                        : 'bg-[linear-gradient(135deg,#5f89ff,#76d0b5)] text-white shadow-[0_14px_30px_rgba(98,134,255,0.24)] hover:-translate-y-0.5'
+                    }`}
+                    aria-label="发送消息"
                   >
-                    {sending ? '发送中...' : '发送'}
+                    ↑
                   </button>
                 </div>
-                <p className="mt-3 text-xs leading-5 text-slate-500">
-                  当前消息会写入选中的 session，并自动带上该会话最近的历史上下文。
+              </div>
+
+              <div className="mt-2 flex items-center justify-between gap-4 px-1">
+                <p className="text-xs text-[var(--text-faint)]">Enter 发送，Shift + Enter 换行</p>
+                <p className="hidden text-xs text-[var(--text-faint)] sm:block">
+                  当前会话会自动继承最近历史上下文
                 </p>
               </div>
             </div>
-          </footer>
-        </section>
-      </div>
+          </div>
+        </div>
+      </section>
     </main>
   )
 }

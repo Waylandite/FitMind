@@ -1,0 +1,155 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fitmind.dev/schemas/test_case.json",
+  "title": "FitMind Test Case Schema",
+  "description": "JSON Schema for FitMind Agent test cases in JSONL format.",
+  "type": "object",
+  "required": ["test_id", "category", "input", "expected", "evaluation_mode"],
+  "properties": {
+    "test_id": {
+      "type": "string",
+      "pattern": "^(INT|WPL|WOR|BOD|NUT|COR|MUL|MEM|EDG)-\\d{3}$",
+      "description": "Unique test case identifier. Prefix maps to capability: INT=intent, WPL=workout_plan, WOR=workout_result, BOD=body_status, NUT=nutrition, COR=correction, MUL=multi_intent, MEM=memory, EDG=edge_case."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "intent_classification",
+        "workout_plan",
+        "workout_result",
+        "body_status",
+        "nutrition",
+        "correction",
+        "multi_intent",
+        "memory_extraction",
+        "edge_case"
+      ],
+      "description": "The agent capability being tested."
+    },
+    "subcategory": {
+      "type": "string",
+      "enum": [
+        "happy_path",
+        "edge_case",
+        "ambiguous",
+        "incomplete",
+        "conflicting",
+        "multi_intent",
+        "correction",
+        "adversarial"
+      ],
+      "description": "The test scenario type for grouping and analysis."
+    },
+    "input": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The raw user message in Chinese (or mixed Chinese/English) to feed to the agent."
+    },
+    "expected": {
+      "type": "object",
+      "description": "The expected structured output from the agent.",
+      "properties": {
+        "intent_type": {
+          "type": "string",
+          "enum": ["plan", "workout", "nutrition", "body_status", "correction", "query", "unknown"],
+          "description": "The primary intent classification. Must match conversation_logs CHECK constraint values."
+        },
+        "intent_bundle": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["plan", "workout", "nutrition", "body_status", "correction", "query"]
+          },
+          "minItems": 1,
+          "description": "For multi-intent inputs: the set of detected intents."
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["fact_type", "raw_text"],
+            "properties": {
+              "fact_type": {
+                "type": "string",
+                "description": "Type of extracted fact. Examples: planned_exercise, completed_exercise, completed_cardio, sleep, fatigue, stress, soreness, body_weight, mood, meal, supplement, correction, perceived_exertion, energy_level, completion_status."
+              },
+              "raw_text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The original text span from which this fact was extracted."
+              },
+              "normalized_payload": {
+                "type": "object",
+                "description": "The normalized structured representation of this fact."
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Confidence score for this extraction."
+              }
+            },
+            "additionalProperties": true
+          },
+          "description": "Array of extracted structured facts."
+        },
+        "memory_keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["memory_category"],
+            "properties": {
+              "memory_category": {
+                "type": "string",
+                "enum": [
+                  "fitness_preference",
+                  "content_preference",
+                  "conversation_preference",
+                  "diet_preference",
+                  "health_constraint_preference",
+                  "fitness_goal_memory",
+                  "training_pattern_memory",
+                  "exercise_preference_memory",
+                  "body_status_baseline_memory",
+                  "nutrition_pattern_memory",
+                  "conversation_style_memory",
+                  "current_phase_memory",
+                  "adherence_risk_memory"
+                ],
+                "description": "Memory category - matches DB CHECK constraints for user_defined_memories and agent_derived_memories."
+              },
+              "memory_key": {
+                "type": "string",
+                "description": "Specific key within the category (e.g., goal_type, response_style)."
+              },
+              "memory_value": {
+                "type": "string",
+                "description": "The value of this memory entry."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Expected memory entries extracted from the input."
+        }
+      },
+      "additionalProperties": false
+    },
+    "evaluation_mode": {
+      "type": "string",
+      "enum": ["exact", "fuzzy", "partial"],
+      "description": "exact = all fields must match precisely; fuzzy = semantic equivalence allowed with tolerances; partial = expected facts must be a subset of actual facts."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional notes explaining the rationale, expected behavior, or special considerations for this test case."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Free-form tags for filtering and grouping test cases."
+    }
+  },
+  "additionalProperties": false
+}
