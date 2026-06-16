@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class WorkoutExerciseDraft(BaseModel):
     exercise_name: str = ""
+    exercise_type: Literal["strength", "cardio", "mobility", "other"] = "strength"
     sets_count: int | None = Field(default=None, ge=1)
     reps_text: str | None = None
     weight_text: str | None = None

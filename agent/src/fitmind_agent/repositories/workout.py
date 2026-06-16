@@ -124,7 +124,7 @@ class WorkoutRecordRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def upsert_daily_record(
+    def create_record(
         self,
         *,
         user_id: int,
@@ -137,42 +137,33 @@ class WorkoutRecordRepository:
         energy_level: int | None = None,
         mood: str | None = None,
     ) -> UserWorkoutRecord:
-        record = self.get_by_user_date(user_id=user_id, record_date=record_date)
-        data = {
-            "session_name": session_name,
-            "duration_minutes": duration_minutes,
-            "completion_status": completion_status,
-            "perceived_exertion": perceived_exertion,
-            "energy_level": energy_level,
-            "mood": mood,
-            "raw_text": raw_text,
-        }
-
-        if record is None:
-            record = UserWorkoutRecord(
-                user_id=user_id,
-                record_date=record_date,
-                **data,
-            )
-        else:
-            for key, value in data.items():
-                setattr(record, key, value)
+        record = UserWorkoutRecord(
+            user_id=user_id,
+            record_date=record_date,
+            session_name=session_name,
+            duration_minutes=duration_minutes,
+            completion_status=completion_status,
+            perceived_exertion=perceived_exertion,
+            energy_level=energy_level,
+            mood=mood,
+            raw_text=raw_text,
+        )
 
         self.session.add(record)
         self.session.commit()
         self.session.refresh(record)
         return record
 
-    def get_by_user_date(self, *, user_id: int, record_date: date) -> UserWorkoutRecord | None:
+    def list_by_user_date(self, *, user_id: int, record_date: date) -> list[UserWorkoutRecord]:
         stmt = (
             select(UserWorkoutRecord)
             .where(
                 UserWorkoutRecord.user_id == user_id,
                 UserWorkoutRecord.record_date == record_date,
             )
-            .limit(1)
+            .order_by(UserWorkoutRecord.id.asc())
         )
-        return self.session.scalar(stmt)
+        return list(self.session.scalars(stmt))
 
     def replace_items(
         self,
@@ -197,6 +188,7 @@ class WorkoutRecordRepository:
                 sequence_no=index,
                 exercise_name=str(item.get("exercise_name") or "").strip(),
                 sets_count=item.get("sets_count"),
+                exercise_type=str(item.get("exercise_type") or "strength"),
                 reps_text=item.get("reps_text"),
                 weight_text=item.get("weight_text"),
                 duration_text=item.get("duration_text"),

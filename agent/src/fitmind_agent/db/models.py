@@ -112,7 +112,6 @@ class UserWorkoutPlan(Base, TimestampMixin):
 class UserWorkoutRecord(Base, TimestampMixin):
     __tablename__ = "user_workout_records"
     __table_args__ = (
-        UniqueConstraint("user_id", "record_date", name="uq_user_workout_records_user_date"),
         CheckConstraint(
             "completion_status IN ('completed', 'partial', 'skipped')",
             name="chk_user_workout_records_completion_status",
@@ -159,6 +158,7 @@ class UserWorkoutRecordItem(Base, TimestampMixin):
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     exercise_name: Mapped[str] = mapped_column(String(255), nullable=False)
     sets_count: Mapped[int | None] = mapped_column(Integer)
+    exercise_type: Mapped[str] = mapped_column(String(20), nullable=False, default="strength")
     reps_text: Mapped[str | None] = mapped_column(String(100))
     weight_text: Mapped[str | None] = mapped_column(String(100))
     duration_text: Mapped[str | None] = mapped_column(String(100))

@@ -27,6 +27,7 @@ from fitmind_agent.services.intent_classifier import IntentClassifier
 from fitmind_agent.services.intent_router import IntentRouter
 from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.nutrition_record_service import NutritionRecordService
+from fitmind_agent.services.prompt_loader import PromptLoader
 from fitmind_agent.services.session_summary_service import SessionSummaryService
 from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 from fitmind_agent.services.workout_plan_service import WorkoutPlanService
@@ -56,6 +57,7 @@ class ChatService:
         settings = get_settings()
         self.db = db
         self.llm_service = llm_service or LLMService()
+        self.prompt_loader = PromptLoader()
         self.intent_classifier = IntentClassifier(llm_service=self.llm_service)
         self.intent_router = IntentRouter()
         self.context_builder = (
@@ -260,8 +262,26 @@ class ChatService:
         if payload.persist_log and payload.user_id is not None and self.db is not None:
             session_id = session_id or self._ensure_active_session(payload)
 
+        yield self._format_agent_state_event(
+            status="queue",
+            node="chat_stream",
+            title="请求已进入 FitMind Agent",
+            detail="正在准备会话上下文与意图识别。",
+        )
+        yield self._format_agent_state_event(
+            status="thinking",
+            node="intent_classifier",
+            title="正在识别用户意图",
+            detail="Agent 正在判断本轮输入属于训练、饮食、身体状态、计划更新还是普通对话。",
+        )
         intent_result = self._classify_with_workflow_context(payload, session_id)
         module_route = self.intent_router.route(intent_result)
+        yield self._format_agent_state_event(
+            status="success",
+            node="intent_classifier",
+            title=f"意图识别完成：{intent_result.intent}",
+            detail=f"置信度 {round((intent_result.confidence or 0) * 100)}%，路由到 {module_route.module_name}。",
+        )
         if payload.persist_log and payload.user_id is not None and self.db is not None and session_id is not None:
             pending_context = self._get_pending_workflow_context(payload, session_id)
             self._persist_intent_recognition(
@@ -280,13 +300,7 @@ class ChatService:
                     db_intent_type=pending_context["db_intent_type"],
                 )
                 self.summary_service.schedule_session_compression(session_id)
-                yield self._format_sse(
-                    {
-                        "type": "delta",
-                        "content": reply,
-                        "model": "fitmind-workflow",
-                    }
-                )
+                yield from self._format_text_delta_events(reply, model="fitmind-workflow")
                 yield self._format_sse(
                     {
                         "type": "done",
@@ -332,15 +346,38 @@ class ChatService:
                     "session_id": session_id,
                 }
             )
-            nutrition_result = NutritionRecordService(
+            nutrition_service = NutritionRecordService(
                 db=self.db,
                 llm_service=self.llm_service,
-            ).maybe_handle(
+            )
+            nutrition_result = None
+            for nutrition_event in nutrition_service.stream_maybe_handle(
                 user_id=payload.user_id,
                 session_id=session_id,
                 user_query=payload.message,
                 intent_result=intent_result,
-            )
+            ):
+                if nutrition_event.get("kind") == "progress":
+                    yield self._format_sse(
+                        {
+                            "type": "agent_state",
+                            **(nutrition_event.get("event") or {}),
+                        }
+                    )
+                    continue
+                if nutrition_event.get("kind") == "result":
+                    nutrition_result = nutrition_event.get("result")
+
+            if nutrition_result is None:
+                nutrition_result = NutritionRecordService(
+                    db=self.db,
+                    llm_service=self.llm_service,
+                ).maybe_handle(
+                    user_id=payload.user_id,
+                    session_id=session_id,
+                    user_query=payload.message,
+                    intent_result=intent_result,
+                )
             if nutrition_result.handled:
                 yield self._format_sse(
                     {
@@ -377,13 +414,7 @@ class ChatService:
                     db_intent_type="nutrition",
                 )
                 self.summary_service.schedule_session_compression(session_id)
-                yield self._format_sse(
-                    {
-                        "type": "delta",
-                        "content": nutrition_result.reply,
-                        "model": "fitmind-workflow",
-                    }
-                )
+                yield from self._format_text_delta_events(nutrition_result.reply, model="fitmind-workflow")
                 yield self._format_sse(
                     {
                         "type": "done",
@@ -451,13 +482,7 @@ class ChatService:
                     db_intent_type="body_status",
                 )
                 self.summary_service.schedule_session_compression(session_id)
-                yield self._format_sse(
-                    {
-                        "type": "delta",
-                        "content": body_status_result.reply,
-                        "model": "fitmind-workflow",
-                    }
-                )
+                yield from self._format_text_delta_events(body_status_result.reply, model="fitmind-workflow")
                 yield self._format_sse(
                     {
                         "type": "done",
@@ -525,13 +550,7 @@ class ChatService:
                     db_intent_type="workout",
                 )
                 self.summary_service.schedule_session_compression(session_id)
-                yield self._format_sse(
-                    {
-                        "type": "delta",
-                        "content": workout_result.reply,
-                        "model": "fitmind-workflow",
-                    }
-                )
+                yield from self._format_text_delta_events(workout_result.reply, model="fitmind-workflow")
                 yield self._format_sse(
                     {
                         "type": "done",
@@ -599,13 +618,7 @@ class ChatService:
                     db_intent_type="plan",
                 )
                 self.summary_service.schedule_session_compression(session_id)
-                yield self._format_sse(
-                    {
-                        "type": "delta",
-                        "content": plan_result.reply,
-                        "model": "fitmind-workflow",
-                    }
-                )
+                yield from self._format_text_delta_events(plan_result.reply, model="fitmind-workflow")
                 yield self._format_sse(
                     {
                         "type": "done",
@@ -690,8 +703,12 @@ class ChatService:
     def _build_messages(self, payload: ChatRequest, session_id: int | None = None) -> list[LLMMessage]:
         if self.context_builder is None:
             messages: list[LLMMessage] = []
-            if payload.system_prompt:
-                messages.append(LLMMessage(role="system", content=payload.system_prompt))
+            messages.append(
+                LLMMessage(
+                    role="system",
+                    content=payload.system_prompt or self.prompt_loader.load("global/system.txt"),
+                )
+            )
             messages.append(LLMMessage(role="user", content=payload.message))
             return messages
         return self.context_builder.build_messages(payload, session_id=session_id)
@@ -854,15 +871,115 @@ class ChatService:
             "confirm_text": "确认保存",
             "cancel_text": "取消保存",
             "correction_text": "纠正错误",
-            "correction_prefill": (
-                f"请修改这条{label}，下面是当前提取结果：\n"
-                f"{json.dumps(source, ensure_ascii=False, indent=2, default=str)}"
+            "correction_prefill": ChatService._build_draft_correction_prefill(
+                workflow=workflow,
+                label=label,
+                payload=source,
             ),
         }
 
     @staticmethod
+    def _build_draft_correction_prefill(*, workflow: str, label: str, payload: dict[str, Any]) -> str:
+        source_text = ChatService._extract_editable_draft_text(workflow=workflow, payload=payload)
+        if source_text:
+            return f"请修改这条{label}：{source_text}"
+        return f"请修改这条{label}，我想调整为："
+
+    @staticmethod
+    def _extract_editable_draft_text(*, workflow: str, payload: dict[str, Any]) -> str:
+        if workflow == "nutrition_record":
+            nutrition = payload.get("nutrition") or {}
+            items = nutrition.get("items") or []
+            if items:
+                return "；".join(
+                    " ".join(
+                        str(part)
+                        for part in (
+                            item.get("original_text") or item.get("food_name"),
+                            f"{item.get('amount_g')}g" if item.get("amount_g") is not None else None,
+                        )
+                        if part
+                    )
+                    for item in items
+                )
+            return str(nutrition.get("raw_text") or payload.get("summary_text") or "").strip()
+
+        if workflow == "body_status_record":
+            body = payload.get("body_status") or {}
+            parts = [
+                body.get("raw_text"),
+                f"睡眠{body.get('sleep_hours')}小时" if body.get("sleep_hours") is not None else None,
+                f"疲劳{body.get('fatigue_level')}/10" if body.get("fatigue_level") is not None else None,
+                f"压力{body.get('stress_level')}/10" if body.get("stress_level") is not None else None,
+                f"酸痛{body.get('soreness_level')}/10" if body.get("soreness_level") is not None else None,
+                f"体重{body.get('body_weight_kg')}kg" if body.get("body_weight_kg") is not None else None,
+                f"情绪{body.get('mood')}" if body.get("mood") else None,
+            ]
+            return "，".join(str(part) for part in parts if part).strip()
+
+        if workflow == "workout_record":
+            exercises = payload.get("exercises") or []
+            if exercises:
+                return "；".join(
+                    " ".join(
+                        str(part)
+                        for part in (
+                            item.get("exercise_name"),
+                            f"{item.get('sets_count')}组" if item.get("sets_count") is not None else None,
+                            item.get("reps_text"),
+                            item.get("weight_text"),
+                            item.get("duration_text"),
+                        )
+                        if part
+                    )
+                    for item in exercises
+                )
+            return str(payload.get("raw_text") or payload.get("summary_text") or "").strip()
+
+        if workflow == "workout_plan_update":
+            return str(payload.get("raw_text") or payload.get("summary_text") or payload.get("title") or "").strip()
+
+        return ""
+
+    @staticmethod
     def _format_sse(payload: dict) -> str:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    @classmethod
+    def _format_agent_state_event(
+        cls,
+        *,
+        status: str,
+        node: str,
+        title: str,
+        detail: str,
+        workflow: str = "chat",
+    ) -> str:
+        return cls._format_sse(
+            {
+                "type": "agent_state",
+                "workflow": workflow,
+                "status": status,
+                "node": node,
+                "title": title,
+                "detail": detail,
+            }
+        )
+
+    @classmethod
+    def _format_text_delta_events(cls, text: str, *, model: str, chunk_size: int = 12) -> Iterator[str]:
+        """Split workflow replies into SSE deltas so clients can render progressively."""
+        if not text:
+            return
+
+        for start in range(0, len(text), chunk_size):
+            yield cls._format_sse(
+                {
+                    "type": "delta",
+                    "content": text[start : start + chunk_size],
+                    "model": model,
+                }
+            )
 
     def _resolve_session_id(self, payload: ChatRequest) -> int | None:
         if self.db is None or payload.user_id is None:

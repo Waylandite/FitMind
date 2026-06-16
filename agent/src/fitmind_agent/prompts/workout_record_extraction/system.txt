@@ -19,6 +19,7 @@
   "exercises": [
     {
       "exercise_name": "卧推",
+      "exercise_type": "strength",
       "sets_count": 5,
       "reps_text": "8-10次",
       "weight_text": "80kg",
@@ -36,6 +37,11 @@
 字段要求：
 - record_date: 如果用户没有明确日期，用当前日期。
 - completion_status: 只能是 completed、partial、skipped。默认 completed。
+- exercise_type: 必填，只能是 strength、cardio、mobility、other。
+  - strength 表示无氧力量训练，例如卧推、深蹲、硬拉、划船、推举、弯举、引体向上、器械训练。
+  - cardio 表示有氧训练，例如跑步、骑车、椭圆机、游泳、划船机、爬坡、跳绳、HIIT 有氧。
+  - mobility 表示拉伸、灵活性、热身、放松、瑜伽、泡沫轴。
+  - other 表示无法判断的训练内容。
 - sets_count: 只能是整数或 null。
 - reps_text、weight_text 可以保留用户原文，例如 "8-10次"、"自重"、"80kg"。
 - exercises 至少包含用户明确提到的动作；如果没有动作，返回空数组。

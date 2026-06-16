@@ -186,7 +186,7 @@ class WorkoutRecordService:
         raw_text: str,
         draft_payload: WorkoutRecordDraftPayload,
     ) -> WorkoutPersistResult:
-        record = self.record_repo.upsert_daily_record(
+        record = self.record_repo.create_record(
             user_id=user_id,
             record_date=draft_payload.record_date,
             session_name=draft_payload.session_name,
@@ -224,6 +224,12 @@ class WorkoutRecordService:
             lines.append("- 动作：")
             for index, item in enumerate(draft_payload.exercises, start=1):
                 parts = [item.exercise_name]
+                if item.exercise_type == "cardio":
+                    parts.append("有氧")
+                elif item.exercise_type == "strength":
+                    parts.append("无氧")
+                elif item.exercise_type == "mobility":
+                    parts.append("灵活性/恢复")
                 if item.sets_count is not None:
                     parts.append(f"{item.sets_count} 组")
                 if item.reps_text:

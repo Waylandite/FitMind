@@ -46,7 +46,7 @@ class TokenUsageTracker:
         try:
             yield
         finally:
-            _current_context.reset(token)
+            TokenUsageTracker._safe_reset(token)
 
     @staticmethod
     @contextmanager
@@ -68,7 +68,7 @@ class TokenUsageTracker:
         try:
             yield
         finally:
-            _current_context.reset(token)
+            TokenUsageTracker._safe_reset(token)
 
     @staticmethod
     def current_context() -> TokenUsageContext | None:
@@ -216,3 +216,13 @@ class TokenUsageTracker:
         with cls._futures_lock:
             cls._futures = [item for item in cls._futures if not item.done()]
             return list(cls._futures)
+
+    @staticmethod
+    def _safe_reset(token) -> None:
+        try:
+            _current_context.reset(token)
+        except ValueError:
+            logger.debug(
+                "Skip token usage ContextVar reset because streaming resumed in a different context.",
+                exc_info=True,
+            )

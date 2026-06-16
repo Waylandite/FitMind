@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from decimal import ROUND_HALF_UP
@@ -9,6 +10,7 @@ from typing import Any
 from typing import Protocol
 from typing import TypedDict
 
+from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.graph import StateGraph
 
@@ -449,7 +451,96 @@ class NutritionLangGraphReActRunner:
         return context
 
     def run(self, *, user_query: str, daily_context: dict[str, Any], current_date: str) -> dict[str, Any]:
-        initial_state: NutritionReActLoopState = {
+        initial_state = self._build_initial_state(
+            user_query=user_query,
+            daily_context=daily_context,
+            current_date=current_date,
+        )
+        final_state = self.graph.invoke(initial_state)
+        return self._build_result(final_state)
+
+    def stream_run(
+        self,
+        *,
+        user_query: str,
+        daily_context: dict[str, Any],
+        current_date: str,
+    ) -> Iterator[dict[str, Any]]:
+        started_at = time.perf_counter()
+        current_state = self._build_initial_state(
+            user_query=user_query,
+            daily_context=daily_context,
+            current_date=current_date,
+        )
+        yield {
+            "kind": "progress",
+            "event": self._progress_event(
+                status="queue",
+                node="nutrition_react",
+                title="饮食 ReAct 已进入执行队列",
+                detail="准备连接营养工具并启动 LangGraph 状态机。",
+                elapsed_ms=0,
+            ),
+        }
+
+        for mode, chunk in self.graph.stream(
+            current_state,
+            stream_mode=["custom", "updates"],
+        ):
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            if mode == "custom":
+                event = chunk if isinstance(chunk, dict) else {"detail": str(chunk)}
+                yield {
+                    "kind": "progress",
+                    "event": {
+                        **event,
+                        "workflow": event.get("workflow") or "nutrition_record",
+                        "elapsed_ms": elapsed_ms,
+                    },
+                }
+                continue
+
+            if mode == "updates" and isinstance(chunk, dict):
+                for node_name, updates in chunk.items():
+                    if isinstance(updates, dict):
+                        current_state.update(updates)
+                    yield {
+                        "kind": "progress",
+                        "event": self._progress_event(
+                            status="success",
+                            node=str(node_name),
+                            title=f"{self._node_label(str(node_name))}完成",
+                            detail=self._summarize_node_update(str(node_name), updates),
+                            iteration=current_state.get("iteration"),
+                            elapsed_ms=elapsed_ms,
+                        ),
+                    }
+
+        final_result = self._build_result(current_state)
+        yield {
+            "kind": "progress",
+            "event": self._progress_event(
+                status="success",
+                node="nutrition_react",
+                title="饮食 ReAct 执行完成",
+                detail=(
+                    f"完成 {final_result.get('iterations', 0)} 轮工具循环，"
+                    f"停止原因：{final_result.get('stop_reason') or 'final'}。"
+                ),
+                iteration=final_result.get("iterations"),
+                elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+            ),
+        }
+        yield {"kind": "final", "result": final_result}
+
+    def _build_initial_state(
+        self,
+        *,
+        user_query: str,
+        daily_context: dict[str, Any],
+        current_date: str,
+    ) -> NutritionReActLoopState:
+        return {
             "user_query": user_query,
             "daily_context": daily_context,
             "current_date": current_date,
@@ -463,7 +554,8 @@ class NutritionLangGraphReActRunner:
             "stop_reason": None,
             "llm_decisions": [],
         }
-        final_state = self.graph.invoke(initial_state)
+
+    def _build_result(self, final_state: NutritionReActLoopState) -> dict[str, Any]:
         if not final_state.get("final_payload"):
             final_state["final_payload"] = self._build_fallback_payload(final_state)
             final_state["stop_reason"] = final_state.get("stop_reason") or "max_iterations_or_no_final"
@@ -497,6 +589,16 @@ class NutritionLangGraphReActRunner:
         return graph.compile()
 
     def _llm_decide(self, state: NutritionReActLoopState) -> dict[str, Any]:
+        self._write_progress(
+            status="thinking",
+            node="llm_decide",
+            title="正在分析饮食输入",
+            detail=(
+                f"第 {state.get('iteration', 0) + 1} 轮：模型正在决定输出草稿，"
+                "还是继续调用营养工具。"
+            ),
+            iteration=state.get("iteration", 0),
+        )
         system_prompt = self.prompt_loader.load("nutrition_react_loop/system.txt")
         user_prompt = self.prompt_loader.render(
             "nutrition_react_loop/user.txt",
@@ -523,6 +625,15 @@ class NutritionLangGraphReActRunner:
         decisions = [*state.get("llm_decisions", []), decision]
 
         if decision.get("action") == "tool":
+            self._write_progress(
+                status="tool_call",
+                node="llm_decide",
+                title="模型选择调用工具",
+                detail=decision.get("reason") or "模型认为需要工具补全营养估算。",
+                iteration=state.get("iteration", 0),
+                tool_name=decision.get("tool_name"),
+                arguments=decision.get("arguments") or {},
+            )
             return {
                 "next_tool_call": {
                     "tool_name": decision.get("tool_name"),
@@ -535,6 +646,13 @@ class NutritionLangGraphReActRunner:
             }
 
         if decision.get("action") == "final":
+            self._write_progress(
+                status="success",
+                node="llm_decide",
+                title="模型生成最终饮食草稿",
+                detail="ReAct 已得到可用于确认入库的结构化饮食数据。",
+                iteration=state.get("iteration", 0),
+            )
             return {
                 "next_tool_call": None,
                 "final_payload": decision.get("payload") or {},
@@ -542,6 +660,13 @@ class NutritionLangGraphReActRunner:
                 "llm_decisions": decisions,
             }
 
+        self._write_progress(
+            status="error",
+            node="llm_decide",
+            title="模型决策格式异常",
+            detail="本轮没有返回有效 action，系统会尝试用已有工具观察生成保守草稿。",
+            iteration=state.get("iteration", 0),
+        )
         return {
             "next_tool_call": None,
             "stop_reason": "invalid_llm_action",
@@ -558,12 +683,38 @@ class NutritionLangGraphReActRunner:
             "arguments": arguments,
             "reason": tool_call.get("reason") or "",
         }
+        self._write_progress(
+            status="tool_call",
+            node="tool_execute",
+            title=f"正在执行工具：{tool_name or 'unknown'}",
+            detail=observation["reason"] or "执行营养工具调用。",
+            iteration=observation["iteration"],
+            tool_name=tool_name,
+            arguments=arguments,
+        )
         try:
             observation["output"] = self.tool_provider.run_tool(tool_name, arguments)
             observation["ok"] = True
+            self._write_progress(
+                status="tool_output",
+                node="tool_execute",
+                title=f"工具返回：{tool_name or 'unknown'}",
+                detail=self._preview_payload(observation["output"]),
+                iteration=observation["iteration"],
+                tool_name=tool_name,
+                output=observation["output"],
+            )
         except Exception as exc:  # noqa: BLE001 - tool errors must be returned to the agent loop.
             observation["output"] = {"error": str(exc)}
             observation["ok"] = False
+            self._write_progress(
+                status="error",
+                node="tool_execute",
+                title=f"工具失败：{tool_name or 'unknown'}",
+                detail=str(exc),
+                iteration=observation["iteration"],
+                tool_name=tool_name,
+            )
 
         return {
             "observations": [*state.get("observations", []), observation],
@@ -678,3 +829,117 @@ class NutritionLangGraphReActRunner:
             "missing_fields": tool_results.get("warnings") or ["ReAct 循环未得到模型 final，已用工具观察保守生成草稿"],
             "summary_text": "基于已完成的营养工具观察生成饮食记录草稿。",
         }
+
+    @staticmethod
+    def _node_label(node_name: str) -> str:
+        labels = {
+            "llm_decide": "模型决策节点",
+            "tool_execute": "工具执行节点",
+            "nutrition_react": "饮食 ReAct",
+        }
+        return labels.get(node_name, node_name)
+
+    @classmethod
+    def _progress_event(
+        cls,
+        *,
+        status: str,
+        node: str,
+        title: str,
+        detail: str,
+        iteration: int | None = None,
+        elapsed_ms: int | None = None,
+        tool_name: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event: dict[str, Any] = {
+            "workflow": "nutrition_record",
+            "status": status,
+            "node": node,
+            "title": title,
+            "detail": detail,
+        }
+        if iteration is not None:
+            event["iteration"] = iteration
+        if elapsed_ms is not None:
+            event["elapsed_ms"] = elapsed_ms
+        if tool_name:
+            event["tool_name"] = tool_name
+        if arguments:
+            event["arguments"] = cls._compact_payload(arguments)
+        if output:
+            event["output"] = cls._compact_payload(output)
+        return event
+
+    @classmethod
+    def _write_progress(
+        cls,
+        *,
+        status: str,
+        node: str,
+        title: str,
+        detail: str,
+        iteration: int | None = None,
+        tool_name: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            return
+
+        writer(
+            cls._progress_event(
+                status=status,
+                node=node,
+                title=title,
+                detail=detail,
+                iteration=iteration,
+                tool_name=tool_name,
+                arguments=arguments,
+                output=output,
+            )
+        )
+
+    @staticmethod
+    def _summarize_node_update(node_name: str, updates: Any) -> str:
+        if not isinstance(updates, dict):
+            return "节点状态已更新。"
+        if node_name == "llm_decide":
+            if updates.get("final_payload") is not None:
+                return "模型已经输出最终结构化草稿。"
+            tool_call = updates.get("next_tool_call") or {}
+            if tool_call:
+                return f"下一步将调用工具 {tool_call.get('tool_name') or 'unknown'}。"
+            return updates.get("stop_reason") or "模型决策已记录。"
+        if node_name == "tool_execute":
+            observations = updates.get("observations") or []
+            if observations:
+                latest = observations[-1]
+                status = "成功" if latest.get("ok") else "失败"
+                return f"{latest.get('tool_name') or 'unknown'} 执行{status}。"
+            return "工具执行状态已更新。"
+        return "节点状态已更新。"
+
+    @classmethod
+    def _preview_payload(cls, payload: Any, max_length: int = 220) -> str:
+        text = json.dumps(cls._compact_payload(payload), ensure_ascii=False, default=str)
+        return text if len(text) <= max_length else f"{text[:max_length]}..."
+
+    @classmethod
+    def _compact_payload(cls, payload: Any) -> Any:
+        if isinstance(payload, dict):
+            compact: dict[str, Any] = {}
+            for key, value in payload.items():
+                if key in {"nutrition_per_100g", "items"} and isinstance(value, (dict, list)):
+                    compact[key] = cls._compact_payload(value)
+                elif isinstance(value, (dict, list)):
+                    compact[key] = cls._compact_payload(value)
+                else:
+                    compact[key] = value
+            return compact
+        if isinstance(payload, list):
+            return [cls._compact_payload(item) for item in payload[:8]]
+        return payload

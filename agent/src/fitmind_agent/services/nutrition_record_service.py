@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date
 from datetime import datetime
 from decimal import Decimal
@@ -88,6 +89,103 @@ class NutritionRecordService:
             payload=payload,
         )
 
+    def stream_maybe_handle(
+        self,
+        *,
+        user_id: int | None,
+        session_id: int | None,
+        user_query: str,
+        intent_result: IntentRecognitionResult,
+    ) -> Iterator[dict]:
+        if user_id is None:
+            yield {
+                "kind": "result",
+                "result": NutritionSleepWorkflowResult(handled=False, action="ignored", reply=""),
+            }
+            return
+
+        pending_draft = self.draft_repo.get_latest_pending(user_id=user_id, session_id=session_id)
+        if pending_draft is not None:
+            yield {
+                "kind": "progress",
+                "event": {
+                    "workflow": "nutrition_record",
+                    "status": "thinking",
+                    "node": "pending_draft",
+                    "title": "检测到待确认饮食草稿",
+                    "detail": "正在判断本轮输入是确认、取消、提问还是纠错。",
+                },
+            }
+            yield {
+                "kind": "result",
+                "result": self._handle_pending_draft(
+                    pending_draft=pending_draft,
+                    user_query=user_query,
+                ),
+            }
+            return
+
+        if intent_result.intent != "today_nutrition_record":
+            yield {
+                "kind": "result",
+                "result": NutritionSleepWorkflowResult(handled=False, action="ignored", reply=""),
+            }
+            return
+
+        yield {
+            "kind": "progress",
+            "event": {
+                "workflow": "nutrition_record",
+                "status": "queue",
+                "node": "nutrition_record",
+                "title": "饮食记录模块已接管",
+                "detail": "正在准备今日上下文和营养 ReAct 工具链。",
+            },
+        }
+        payload = yield from self._extract_payload_stream(user_id=user_id, user_query=user_query)
+        if not payload.nutrition.has_content or not self._has_text(payload.nutrition.raw_text):
+            yield {
+                "kind": "result",
+                "result": NutritionSleepWorkflowResult(
+                    handled=True,
+                    action="draft_created",
+                    reply="我识别到你想记录饮食，但这句话里没有足够可落库的饮食信息。你可以补充吃了什么、份量或营养估算。",
+                    payload=payload,
+                ),
+            }
+            return
+
+        draft = self.draft_repo.create(
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "status": "pending",
+                "raw_text": user_query,
+                "draft_payload": payload.model_dump(mode="json"),
+                "confidence_score": Decimal(str(payload.confidence)),
+            }
+        )
+        yield {
+            "kind": "progress",
+            "event": {
+                "workflow": "nutrition_record",
+                "status": "success",
+                "node": "draft_create",
+                "title": "饮食草稿已生成",
+                "detail": f"草稿 #{draft.id} 已等待用户确认，暂未写入正式记录表。",
+            },
+        }
+        yield {
+            "kind": "result",
+            "result": NutritionSleepWorkflowResult(
+                handled=True,
+                action="draft_created",
+                reply=self._build_confirmation_reply(payload),
+                draft_id=draft.id,
+                payload=payload,
+            ),
+        }
+
     def _handle_pending_draft(self, *, pending_draft, user_query: str) -> NutritionSleepWorkflowResult:
         normalized = user_query.strip().lower()
 
@@ -162,6 +260,38 @@ class NutritionRecordService:
         )
 
         final_payload = react_result.get("final_payload")
+        return NutritionSleepRecordPayload.model_validate(final_payload)
+
+    def _extract_payload_stream(
+        self,
+        *,
+        user_id: int,
+        user_query: str,
+    ) -> Iterator[dict]:
+        current_date = date.today()
+        daily_context = self._build_daily_context(user_id=user_id, record_date=current_date)
+        final_payload: dict | None = None
+        for event in self.react_runner.stream_run(
+            user_query=user_query,
+            daily_context=daily_context,
+            current_date=current_date.isoformat(),
+        ):
+            if event.get("kind") == "progress":
+                yield event
+            elif event.get("kind") == "final":
+                result = event.get("result") or {}
+                final_payload = result.get("final_payload")
+
+        yield {
+            "kind": "progress",
+            "event": {
+                "workflow": "nutrition_record",
+                "status": "success",
+                "node": "payload_validate",
+                "title": "结构化饮食数据校验完成",
+                "detail": "已转换为 FitMind 可确认入库的饮食记录 JSON。",
+            },
+        }
         return NutritionSleepRecordPayload.model_validate(final_payload)
 
     def _build_daily_context(self, *, user_id: int, record_date: date) -> dict:

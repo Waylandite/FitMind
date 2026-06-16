@@ -65,13 +65,14 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
 
         def event_stream() -> Iterator[str]:
             final_intent: str | None = None
+            stream_session_id = session_id
             try:
                 with TokenUsageTracker.context(
                     TokenUsageContext(
                         request_id=request_id,
                         user_id=payload.user_id,
                         thread_id=payload.thread_id,
-                        session_id=session_id,
+                        session_id=stream_session_id,
                         workflow="chat",
                         node_name="chat_stream",
                     )
@@ -90,11 +91,15 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
                 reply = f"对话流处理失败：{exc}"
                 if payload.persist_log and payload.user_id is not None:
                     try:
-                        session_id = service._resolve_session_id(payload) or service._ensure_active_session(payload)
+                        stream_session_id = (
+                            service._resolve_session_id(payload)
+                            or stream_session_id
+                            or service._ensure_active_session(payload)
+                        )
                         service._persist_conversation_logs(
                             payload=payload,
                             reply=reply,
-                            session_id=session_id,
+                            session_id=stream_session_id,
                             db_intent_type="query",
                         )
                     except Exception:
@@ -105,7 +110,7 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
                     request_id=request_id,
                     user_id=payload.user_id,
                     thread_id=payload.thread_id,
-                    session_id=session_id,
+                    session_id=stream_session_id,
                     intent_type=final_intent,
                 )
 

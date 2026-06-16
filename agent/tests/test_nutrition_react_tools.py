@@ -178,6 +178,33 @@ def test_langgraph_react_runner_executes_llm_selected_tools() -> None:
     assert "tools" not in result["tool_connection_context"]
 
 
+def test_langgraph_react_runner_streams_agent_state_events() -> None:
+    llm = ScriptedLLMService(
+        [
+            '{"action":"tool","tool_name":"search_food_nutrition","arguments":{"food_name":"鸡蛋"},"reason":"先查标准营养"}',
+            '{"action":"final","payload":{"record_date":"2026-06-14","nutrition":{"has_content":true,"raw_text":"2026-06-14 早餐鸡蛋","calories_estimate":143,"protein_g_estimate":12.6,"items":[{"food_name":"鸡蛋","original_text":"鸡蛋","amount_g":100,"calories_kcal":143,"protein_g":12.6,"confidence":0.9,"source":"local_food_database","warnings":[]}]},"body_status":{"has_content":false,"raw_text":null},"confidence":0.9,"missing_fields":[],"summary_text":"记录鸡蛋。"},"reason":"工具结果足够"}',
+        ]
+    )
+    runner = NutritionLangGraphReActRunner(llm_service=llm, max_iterations=3)
+    events = list(
+        runner.stream_run(
+            user_query="早餐鸡蛋",
+            current_date="2026-06-14",
+            daily_context={"record_date": "2026-06-14", "nutrition": None},
+        )
+    )
+
+    progress_events = [event["event"] for event in events if event["kind"] == "progress"]
+    statuses = [event["status"] for event in progress_events]
+
+    assert "queue" in statuses
+    assert "thinking" in statuses
+    assert "tool_call" in statuses
+    assert "tool_output" in statuses
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["result"]["final_payload"]["nutrition"]["items"][0]["food_name"] == "鸡蛋"
+
+
 def test_langgraph_react_runner_stops_at_max_iterations() -> None:
     llm = ScriptedLLMService(
         [

@@ -4,6 +4,7 @@ from fitmind_agent.repositories.memory import ChatSessionSummaryRepository
 from fitmind_agent.repositories.memory import ConversationLogRepository
 from fitmind_agent.schemas.chat import ChatRequest
 from fitmind_agent.schemas.llm import LLMMessage
+from fitmind_agent.services.prompt_loader import PromptLoader
 
 
 class ConversationContextBuilder:
@@ -21,16 +22,22 @@ class ConversationContextBuilder:
         conversation_log_repository: ConversationLogRepository,
         summary_repository: ChatSessionSummaryRepository | None = None,
         recent_context_rounds: int = 5,
+        prompt_loader: PromptLoader | None = None,
     ) -> None:
         self.conversation_log_repository = conversation_log_repository
         self.summary_repository = summary_repository
         self.recent_context_rounds = recent_context_rounds
+        self.prompt_loader = prompt_loader or PromptLoader()
 
     def build_messages(self, payload: ChatRequest, session_id: int | None = None) -> list[LLMMessage]:
         messages: list[LLMMessage] = []
 
-        if payload.system_prompt:
-            messages.append(LLMMessage(role="system", content=payload.system_prompt))
+        messages.append(
+            LLMMessage(
+                role="system",
+                content=payload.system_prompt or self.prompt_loader.load("global/system.txt"),
+            )
+        )
 
         summary_message = self._build_summary_message(session_id=session_id)
         if summary_message is not None:

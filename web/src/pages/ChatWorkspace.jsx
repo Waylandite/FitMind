@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import AgentThoughtProcess from '../components/AgentThoughtProcess'
 
 const quickPrompts = [
   '记录今天的腿部训练和有氧',
@@ -21,9 +22,6 @@ const memoryPreferences = [
 
 const apiBaseUrl =
   import.meta.env.VITE_AGENT_BASE_URL?.replace(/\/$/, '') ?? 'http://127.0.0.1:8000/api/v1'
-
-const defaultSystemPrompt =
-  '你是 FitMind，一个专业、简洁、友好的健身与健康助手。请围绕用户输入，给出清晰结论和下一步建议。'
 
 const emptyAssistantCard = {
   id: 'starter-assistant',
@@ -100,7 +98,68 @@ function buildDraftCorrectionPrefill(event) {
   }
 
   const source = event.payload ?? event.draft ?? {}
-  return `请修改这条${workflowLabel(event.workflow)}，下面是当前提取结果：\n${formatJsonForEdit(source)}`
+  return `请修改这条${workflowLabel(event.workflow)}：${buildEditableDraftText(event.workflow, source)}`
+}
+
+function buildEditableDraftText(workflow, payload) {
+  if (!payload) {
+    return ''
+  }
+
+  if (workflow === 'nutrition_record') {
+    const items = payload.nutrition?.items ?? []
+    if (items.length > 0) {
+      return items
+        .map((item) =>
+          [item.original_text || item.food_name, item.amount_g ? `${item.amount_g}g` : '']
+            .filter(Boolean)
+            .join(' '),
+        )
+        .join('；')
+    }
+    return payload.nutrition?.raw_text ?? payload.summary_text ?? ''
+  }
+
+  if (workflow === 'body_status_record') {
+    const body = payload.body_status ?? {}
+    return [
+      body.raw_text,
+      body.sleep_hours ? `睡眠${body.sleep_hours}小时` : '',
+      body.fatigue_level ? `疲劳${body.fatigue_level}/10` : '',
+      body.stress_level ? `压力${body.stress_level}/10` : '',
+      body.soreness_level ? `酸痛${body.soreness_level}/10` : '',
+      body.body_weight_kg ? `体重${body.body_weight_kg}kg` : '',
+      body.mood ? `情绪${body.mood}` : '',
+    ]
+      .filter(Boolean)
+      .join('，')
+  }
+
+  if (workflow === 'workout_record') {
+    const exercises = payload.exercises ?? []
+    if (exercises.length > 0) {
+      return exercises
+        .map((item) =>
+          [
+            item.exercise_name,
+            item.sets_count ? `${item.sets_count}组` : '',
+            item.reps_text,
+            item.weight_text,
+            item.duration_text,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        )
+        .join('；')
+    }
+    return payload.raw_text ?? payload.summary_text ?? ''
+  }
+
+  if (workflow === 'workout_plan_update') {
+    return payload.raw_text ?? payload.summary_text ?? payload.title ?? ''
+  }
+
+  return ''
 }
 
 function buildDraftCardFromWorkflow(event) {
@@ -217,6 +276,29 @@ function formatMessageTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date)
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '0.0s'
+  }
+
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function isDraftGenerationTrace(event) {
+  if (!event || event.workflow !== 'nutrition_record') {
+    return false
+  }
+
+  return [
+    'nutrition_record',
+    'nutrition_react',
+    'llm_decide',
+    'tool_execute',
+    'payload_validate',
+    'draft_create',
+  ].includes(event.node)
 }
 
 function normalizeDayStart(dateLike) {
@@ -439,26 +521,32 @@ function HourglassLoader() {
   )
 }
 
-function MessageRow({ message, sending, onDraftAction }) {
+function MessageRow({ message, sending, onDraftAction, now, onAutoScroll }) {
   const meta = roleMeta(message.role)
+  const isUser = message.role === 'user'
   const isStreamingAssistant = message.role === 'assistant' && message.streaming
+  const isWaitingFirstToken = isStreamingAssistant && !message.firstTokenAtMs && !message.content
+  const thinkingMs =
+    message.thinkingMs ??
+    (isWaitingFirstToken && message.requestStartedAtMs ? Math.max(0, now - message.requestStartedAtMs) : null)
+  const visibleAgentTrace = (message.agentTrace ?? []).filter(isDraftGenerationTrace)
 
   return (
-    <article className={`grid grid-cols-[2.5rem_minmax(0,1fr)] gap-4 py-5 ${isStreamingAssistant ? 'streaming-rise' : ''}`}>
-      <div
-        className={`mt-1 flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${
-          message.role === 'user'
-            ? 'bg-[rgba(80,113,255,0.08)] text-[var(--accent)]'
-            : message.role === 'system'
-              ? 'bg-[rgba(255,197,124,0.12)] text-[#bc7a28]'
-              : 'bg-[linear-gradient(135deg,rgba(124,92,255,0.1),rgba(93,181,255,0.14),rgba(126,214,173,0.14))] text-[#5168ff]'
-        }`}
-      >
-        {message.role === 'assistant' ? '✦' : meta.label.slice(0, 1)}
-      </div>
+    <article
+      className={`flex gap-3 py-4 ${isUser ? 'justify-end' : 'justify-start'} ${
+        isStreamingAssistant ? 'streaming-rise' : ''
+      }`}
+    >
+      {!isUser ? (
+        <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,rgba(124,92,255,0.1),rgba(93,181,255,0.14),rgba(126,214,173,0.14))] text-sm font-semibold text-[#5168ff]">
+          ✦
+        </div>
+      ) : null}
 
-      <div className="min-w-0">
-        <div className="flex items-center gap-3">
+      <div
+        className={`min-w-0 max-w-[min(78%,760px)] ${isUser ? 'items-end' : 'items-start'}`}
+      >
+        <div className={`mb-1 flex items-center gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
           <p className="text-sm font-semibold text-[var(--text)]">{meta.label}</p>
           <p className="text-xs text-[var(--text-faint)]">
             {formatMessageTime(message.createdAt) || (message.streaming ? '生成中' : '')}
@@ -467,20 +555,46 @@ function MessageRow({ message, sending, onDraftAction }) {
             <span className="inline-flex items-center gap-1.5 text-xs text-[var(--text-faint)]">
               <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
               <HourglassLoader />
-              正在生成
+              {isWaitingFirstToken ? `思考中 ${formatDuration(thinkingMs ?? 0)}` : '正在输入'}
+            </span>
+          ) : null}
+          {!message.streaming && message.thinkingMs ? (
+            <span className="rounded-full bg-[rgba(69,92,150,0.06)] px-2 py-1 text-xs text-[var(--text-faint)]">
+              思考 {formatDuration(message.thinkingMs)}
             </span>
           ) : null}
         </div>
 
-        <div className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-8 tracking-[0.005em] text-[var(--text)] sm:text-[16px]">
-          {message.content}
-        </div>
-        <DraftActionCard
-          card={message.draftCard}
-          disabled={sending || Boolean(message.draftCard?.resolvedLabel)}
-          onAction={(action, card) => onDraftAction(action, card, message.id)}
-        />
+        {!isUser ? (
+          <>
+            <AgentThoughtProcess
+              events={visibleAgentTrace}
+              streaming={message.streaming}
+              onAutoScroll={onAutoScroll}
+            />
+            <div
+              className="mt-3 whitespace-pre-wrap break-words rounded-[1.4rem] rounded-bl-md bg-[rgba(255,255,255,0.78)] px-4 py-3 text-[15px] leading-7 tracking-[0.005em] text-[var(--text)] shadow-[0_14px_36px_rgba(77,92,123,0.08)] ring-1 ring-[rgba(35,52,76,0.06)] backdrop-blur-xl sm:text-[16px]"
+            >
+              {message.content || (isWaitingFirstToken ? 'FitMind 正在理解你的记录...' : '')}
+            </div>
+            <DraftActionCard
+              card={message.draftCard}
+              disabled={sending || Boolean(message.draftCard?.resolvedLabel)}
+              onAction={(action, card) => onDraftAction(action, card, message.id)}
+            />
+          </>
+        ) : (
+          <div className="whitespace-pre-wrap break-words rounded-[1.4rem] rounded-br-md bg-[linear-gradient(135deg,#5f89ff,#74ceb5)] px-4 py-3 text-[15px] leading-7 tracking-[0.005em] text-white shadow-[0_16px_34px_rgba(95,137,255,0.22)] sm:text-[16px]">
+            {message.content}
+          </div>
+        )}
       </div>
+
+      {isUser ? (
+        <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[rgba(80,113,255,0.1)] text-sm font-semibold text-[var(--accent)]">
+          {meta.label.slice(0, 1)}
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -499,9 +613,17 @@ function ChatWorkspace({ session, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [thinkingNow, setThinkingNow] = useState(Date.now())
   const viewportRef = useRef(null)
+  const bottomAnchorRef = useRef(null)
   const composerRef = useRef(null)
   const assistantMessageIdRef = useRef(null)
+  const typewriterQueueRef = useRef('')
+  const typewriterTimerRef = useRef(null)
+  const bottomLockTimerRef = useRef(null)
+  const streamStartedAtRef = useRef(0)
+  const firstTokenAtRef = useRef(null)
+  const pendingFinishRef = useRef(false)
   const userId = session.userId ?? 1
 
   const activeSession = useMemo(
@@ -511,16 +633,177 @@ function ChatWorkspace({ session, onLogout }) {
 
   const groupedSessions = useMemo(() => groupSessionsByDate(sessions), [sessions])
 
-  useEffect(() => {
-    if (!viewportRef.current) {
+  const scrollChatToBottom = (behavior = 'smooth') => {
+    const viewport = viewportRef.current
+    if (!viewport) {
       return
     }
 
-    viewportRef.current.scrollTo({
-      top: viewportRef.current.scrollHeight,
-      behavior: 'smooth',
+    const scroll = (nextBehavior = behavior) => {
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior: nextBehavior,
+      })
+    }
+
+    window.requestAnimationFrame(() => {
+      scroll(behavior)
+      window.requestAnimationFrame(() => {
+        scroll('auto')
+      })
+      window.setTimeout(() => scroll('auto'), 80)
+      window.setTimeout(() => scroll('auto'), 220)
     })
+  }
+
+  const stopBottomLock = () => {
+    if (!bottomLockTimerRef.current) {
+      return
+    }
+
+    window.clearInterval(bottomLockTimerRef.current)
+    bottomLockTimerRef.current = null
+  }
+
+  const startBottomLock = () => {
+    stopBottomLock()
+    scrollChatToBottom('auto')
+    bottomLockTimerRef.current = window.setInterval(() => {
+      scrollChatToBottom('auto')
+    }, 120)
+  }
+
+  const finishAssistantTyping = () => {
+    const assistantId = assistantMessageIdRef.current
+    if (!assistantId) {
+      return
+    }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === assistantId
+          ? {
+              ...message,
+              streaming: false,
+            }
+          : message,
+      ),
+    )
+    assistantMessageIdRef.current = null
+    pendingFinishRef.current = false
+    setSending(false)
+    scrollChatToBottom('smooth')
+    window.setTimeout(() => {
+      stopBottomLock()
+      scrollChatToBottom('auto')
+    }, 320)
+  }
+
+  const scheduleTypewriter = () => {
+    if (typewriterTimerRef.current) {
+      return
+    }
+
+    const tick = () => {
+      const assistantId = assistantMessageIdRef.current
+      if (!assistantId) {
+        typewriterQueueRef.current = ''
+        typewriterTimerRef.current = null
+        pendingFinishRef.current = false
+        return
+      }
+
+      const queued = typewriterQueueRef.current
+      if (!queued) {
+        typewriterTimerRef.current = null
+        if (pendingFinishRef.current) {
+          finishAssistantTyping()
+        }
+        return
+      }
+
+      const take = Math.min(queued.length, queued.length > 48 ? 4 : 2)
+      const nextText = queued.slice(0, take)
+      typewriterQueueRef.current = queued.slice(take)
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: `${message.content}${nextText}`,
+                streaming: true,
+              }
+            : message,
+        ),
+      )
+
+      typewriterTimerRef.current = window.setTimeout(tick, 18)
+    }
+
+    typewriterTimerRef.current = window.setTimeout(tick, 0)
+  }
+
+  const appendAssistantDelta = (content) => {
+    if (!content || !assistantMessageIdRef.current) {
+      return
+    }
+
+    if (!firstTokenAtRef.current) {
+      const now = performance.now()
+      firstTokenAtRef.current = now
+      const thinkingMs = streamStartedAtRef.current ? now - streamStartedAtRef.current : 0
+      const assistantId = assistantMessageIdRef.current
+
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                firstTokenAtMs: Date.now(),
+                thinkingMs,
+              }
+            : message,
+        ),
+      )
+    }
+
+    typewriterQueueRef.current += content
+    scheduleTypewriter()
+  }
+
+  const markAssistantDone = () => {
+    pendingFinishRef.current = true
+    scheduleTypewriter()
+  }
+
+  useLayoutEffect(() => {
+    scrollChatToBottom(sending ? 'auto' : 'smooth')
   }, [messages, sending])
+
+  useEffect(() => {
+    if (!sending) {
+      return undefined
+    }
+
+    const timer = window.setInterval(() => {
+      setThinkingNow(Date.now())
+    }, 200)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [sending])
+
+  useEffect(
+    () => () => {
+      if (typewriterTimerRef.current) {
+        window.clearTimeout(typewriterTimerRef.current)
+      }
+      stopBottomLock()
+    },
+    [],
+  )
 
   useEffect(() => {
     if (!composerRef.current) {
@@ -693,6 +976,14 @@ function ChatWorkspace({ session, onLogout }) {
 
     const assistantId = buildMessageId('assistant')
     assistantMessageIdRef.current = assistantId
+    streamStartedAtRef.current = performance.now()
+    firstTokenAtRef.current = null
+    typewriterQueueRef.current = ''
+    pendingFinishRef.current = false
+    if (typewriterTimerRef.current) {
+      window.clearTimeout(typewriterTimerRef.current)
+      typewriterTimerRef.current = null
+    }
 
     setMessages((current) => {
       const cleaned =
@@ -707,13 +998,18 @@ function ChatWorkspace({ session, onLogout }) {
           content: '',
           streaming: true,
           createdAt: new Date().toISOString(),
+          requestStartedAtMs: Date.now(),
+          agentTrace: [],
         },
       ]
     })
 
     setDraft('')
     setSending(true)
-    setConnectionState('模型正在回复')
+    setThinkingNow(Date.now())
+    setConnectionState('正在思考')
+    startBottomLock()
+    scrollChatToBottom('auto')
 
     try {
       const response = await fetch(`${apiBaseUrl}/chat/stream`, {
@@ -725,7 +1021,6 @@ function ChatWorkspace({ session, onLogout }) {
           user_id: userId,
           thread_id: activeSession.thread_id,
           message: text,
-          system_prompt: defaultSystemPrompt,
           persist_log: true,
         }),
       })
@@ -755,6 +1050,29 @@ function ChatWorkspace({ session, onLogout }) {
           return
         }
 
+        if (event.type === 'agent_state') {
+          const traceEvent = {
+            ...event,
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            receivedAt: new Date().toISOString(),
+          }
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageIdRef.current
+                ? {
+                    ...message,
+                    agentTrace: [...(message.agentTrace ?? []), traceEvent],
+                  }
+                : message,
+            ),
+          )
+          scrollChatToBottom('auto')
+          if (event.title) {
+            setConnectionState(event.title)
+          }
+          return
+        }
+
         if (event.type === 'workflow') {
           const draftCard = buildDraftCardFromWorkflow(event)
           if (draftCard) {
@@ -768,38 +1086,25 @@ function ChatWorkspace({ session, onLogout }) {
                   : message,
               ),
             )
+            scrollChatToBottom('auto')
           }
           return
         }
 
         if (event.type === 'delta') {
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantMessageIdRef.current
-                ? {
-                    ...message,
-                    content: `${message.content}${event.content ?? ''}`,
-                    streaming: true,
-                  }
-                : message,
-            ),
-          )
+          appendAssistantDelta(event.content ?? '')
+          scrollChatToBottom('auto')
+          setConnectionState('正在输入')
           return
         }
 
         if (event.type === 'done') {
           streamFinished = true
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantMessageIdRef.current
-                ? {
-                    ...message,
-                    content: event.reply ?? message.content,
-                    streaming: false,
-                  }
-                : message,
-            ),
-          )
+          if (event.reply && !firstTokenAtRef.current) {
+            appendAssistantDelta(event.reply)
+          }
+          markAssistantDone()
+          scrollChatToBottom('smooth')
           if (event.intent) {
             const percent = Math.round((event.intent_confidence ?? 0) * 100)
             setConnectionState(`已完成 · ${event.intent} · ${percent}%`)
@@ -811,6 +1116,12 @@ function ChatWorkspace({ session, onLogout }) {
 
         if (event.type === 'error') {
           streamFinished = true
+          typewriterQueueRef.current = ''
+          pendingFinishRef.current = false
+          if (typewriterTimerRef.current) {
+            window.clearTimeout(typewriterTimerRef.current)
+            typewriterTimerRef.current = null
+          }
           setErrorMessage(event.message ?? '模型流返回错误')
           setConnectionState('连接异常')
           setMessages((current) =>
@@ -819,11 +1130,13 @@ function ChatWorkspace({ session, onLogout }) {
                 ? {
                     ...message,
                     content: message.content || '本次请求未成功完成，请稍后重试。',
-                    streaming: false,
-                  }
-                : message,
+                  streaming: false,
+                }
+              : message,
             ),
           )
+          assistantMessageIdRef.current = null
+          stopBottomLock()
         }
       }
 
@@ -843,6 +1156,12 @@ function ChatWorkspace({ session, onLogout }) {
       }
 
       if (!streamFinished) {
+        typewriterQueueRef.current = ''
+        pendingFinishRef.current = false
+        if (typewriterTimerRef.current) {
+          window.clearTimeout(typewriterTimerRef.current)
+          typewriterTimerRef.current = null
+        }
         setErrorMessage('本次对话流提前结束，后端没有返回完整结果。')
         setConnectionState('连接中断')
         setMessages((current) =>
@@ -856,6 +1175,8 @@ function ChatWorkspace({ session, onLogout }) {
               : message,
           ),
         )
+        assistantMessageIdRef.current = null
+        stopBottomLock()
       }
 
       await refreshSessions(activeSession.id)
@@ -874,9 +1195,16 @@ function ChatWorkspace({ session, onLogout }) {
             : message,
         ),
       )
-    } finally {
       assistantMessageIdRef.current = null
-      setSending(false)
+      stopBottomLock()
+      scrollChatToBottom('auto')
+    } finally {
+      if (!pendingFinishRef.current && !typewriterQueueRef.current) {
+        assistantMessageIdRef.current = null
+        setSending(false)
+        stopBottomLock()
+        scrollChatToBottom('auto')
+      }
     }
   }
 
@@ -958,7 +1286,7 @@ function ChatWorkspace({ session, onLogout }) {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#fbfbfd] text-[var(--text)]">
+    <main className="relative h-screen overflow-hidden bg-[#fbfbfd] text-[var(--text)]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(126,150,255,0.08),transparent_28%),radial-gradient(circle_at_85%_20%,rgba(133,208,181,0.07),transparent_26%),linear-gradient(180deg,#fcfcfe_0%,#fbfbfd_100%)]" />
 
       <button
@@ -1124,7 +1452,7 @@ function ChatWorkspace({ session, onLogout }) {
         </div>
       </aside>
 
-      <section className="relative mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-5 pb-36 pt-24 sm:px-8 sm:pt-28">
+      <section className="relative mx-auto flex h-screen min-h-0 w-full max-w-[1400px] flex-col overflow-hidden px-5 pb-36 pt-24 sm:px-8 sm:pt-28">
         <header className="mx-auto flex w-full max-w-[800px] items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--text-faint)]">
@@ -1142,9 +1470,9 @@ function ChatWorkspace({ session, onLogout }) {
 
         <div
           ref={viewportRef}
-          className="app-scrollbar relative mt-8 flex-1 overflow-y-auto"
+          className="app-scrollbar relative mt-8 min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <div className="mx-auto w-full max-w-[800px] pb-20">
+          <div className="mx-auto w-full max-w-[880px] pb-40">
             <div className="mb-8 flex flex-wrap gap-2">
               {quickPrompts.map((prompt) => (
                 <button
@@ -1165,17 +1493,20 @@ function ChatWorkspace({ session, onLogout }) {
                 <SkeletonMessage lines={5} />
               </div>
             ) : (
-              <div className="divide-y divide-[rgba(37,48,83,0.05)]">
+              <div className="space-y-1">
                 {messages.map((message) => (
                   <MessageRow
                     key={message.id}
                     message={message}
                     sending={sending}
+                    now={thinkingNow}
+                    onAutoScroll={() => scrollChatToBottom('smooth')}
                     onDraftAction={handleDraftAction}
                   />
                 ))}
               </div>
             )}
+            <div ref={bottomAnchorRef} className="h-1" aria-hidden="true" />
           </div>
         </div>
 
