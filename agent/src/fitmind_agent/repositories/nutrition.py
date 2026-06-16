@@ -166,6 +166,24 @@ class NutritionRecordRepository:
         )
         return self.session.scalar(stmt)
 
+    def list_between_dates(
+        self,
+        *,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[UserNutritionRecord]:
+        stmt = (
+            select(UserNutritionRecord)
+            .where(
+                UserNutritionRecord.user_id == user_id,
+                UserNutritionRecord.record_date >= start_date,
+                UserNutritionRecord.record_date <= end_date,
+            )
+            .order_by(UserNutritionRecord.record_date.asc())
+        )
+        return list(self.session.scalars(stmt))
+
     @staticmethod
     def _append_raw_text(existing_text: str | None, new_text: str) -> str:
         normalized_existing = (existing_text or "").strip()
@@ -273,6 +291,24 @@ class BodyStatusRecordRepository:
             .limit(1)
         )
         return self.session.scalar(stmt)
+
+    def list_between_dates(
+        self,
+        *,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[UserBodyStatusRecord]:
+        stmt = (
+            select(UserBodyStatusRecord)
+            .where(
+                UserBodyStatusRecord.user_id == user_id,
+                UserBodyStatusRecord.record_date >= start_date,
+                UserBodyStatusRecord.record_date <= end_date,
+            )
+            .order_by(UserBodyStatusRecord.record_date.asc())
+        )
+        return list(self.session.scalars(stmt))
 
     @staticmethod
     def _append_raw_text(existing_text: str | None, new_text: str) -> str:

@@ -13,11 +13,12 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         description="已接入当日训练记录提取、确认和落库模块。",
         status="ready",
     ),
-    "recent_workout_summary": IntentModuleRoute(
-        intent="recent_workout_summary",
-        module_name="workout_summary_agent",
+    "recent_health_summary": IntentModuleRoute(
+        intent="recent_health_summary",
+        module_name="health_summary_agent",
         db_intent_type="query",
-        description="待接入最近训练情况总结模块。",
+        description="已接入最近训练、饮食、身体状态和长期计划汇总分析模块。",
+        status="ready",
     ),
     "today_workout_recommendation": IntentModuleRoute(
         intent="today_workout_recommendation",

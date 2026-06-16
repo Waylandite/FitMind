@@ -28,6 +28,7 @@ from fitmind_agent.services.intent_router import IntentRouter
 from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.nutrition_record_service import NutritionRecordService
 from fitmind_agent.services.prompt_loader import PromptLoader
+from fitmind_agent.services.recent_health_summary_service import RecentHealthSummaryService
 from fitmind_agent.services.session_summary_service import SessionSummaryService
 from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 from fitmind_agent.services.workout_plan_service import WorkoutPlanService
@@ -346,6 +347,55 @@ class ChatService:
                     "session_id": session_id,
                 }
             )
+            summary_service = RecentHealthSummaryService(llm_service=self.llm_service)
+            summary_result = None
+            for summary_event in summary_service.stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            ):
+                if summary_event.get("kind") == "progress":
+                    yield self._format_sse(
+                        {
+                            "type": "agent_state",
+                            **(summary_event.get("event") or {}),
+                        }
+                    )
+                    continue
+                if summary_event.get("kind") == "result":
+                    summary_result = summary_event.get("result")
+
+            if summary_result is not None and summary_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=summary_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield from self._format_text_delta_events(summary_result.reply, model="fitmind-workflow")
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": summary_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "recent_health_summary",
+                            "action": summary_result.action,
+                        },
+                    }
+                )
+                return
+
             nutrition_service = NutritionRecordService(
                 db=self.db,
                 llm_service=self.llm_service,

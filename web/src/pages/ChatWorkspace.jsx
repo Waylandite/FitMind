@@ -1,5 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import AgentThoughtProcess from '../components/AgentThoughtProcess'
+import MarkdownMessage from '../components/MarkdownMessage'
+import useSmartAutoScroll from '../hooks/useSmartAutoScroll'
 
 const quickPrompts = [
   '记录今天的腿部训练和有氧',
@@ -27,6 +29,14 @@ const emptyAssistantCard = {
   id: 'starter-assistant',
   role: 'assistant',
   content: '新的会话已经创建。现在可以直接告诉我你的训练、饮食、睡眠或身体状态。',
+}
+
+function getTimestampMs() {
+  return Date.now()
+}
+
+function getPerfNow() {
+  return performance.now()
 }
 
 function parseSseBuffer(buffer, onEvent) {
@@ -287,18 +297,34 @@ function formatDuration(ms) {
 }
 
 function isDraftGenerationTrace(event) {
-  if (!event || event.workflow !== 'nutrition_record') {
+  if (!event) {
     return false
   }
 
-  return [
-    'nutrition_record',
-    'nutrition_react',
-    'llm_decide',
-    'tool_execute',
-    'payload_validate',
-    'draft_create',
-  ].includes(event.node)
+  if (event.workflow === 'nutrition_record') {
+    return [
+      'nutrition_record',
+      'nutrition_react',
+      'llm_decide',
+      'tool_execute',
+      'payload_validate',
+      'draft_create',
+    ].includes(event.node)
+  }
+
+  if (event.workflow === 'recent_health_summary') {
+    return [
+      'summary_start',
+      'query_workout_records',
+      'query_nutrition_records',
+      'query_body_status_records',
+      'query_workout_plans',
+      'query_latest_workout_plan',
+      'summary_llm',
+    ].includes(event.node)
+  }
+
+  return false
 }
 
 function normalizeDayStart(dateLike) {
@@ -521,7 +547,7 @@ function HourglassLoader() {
   )
 }
 
-function MessageRow({ message, sending, onDraftAction, now, onAutoScroll }) {
+function MessageRow({ message, sending, onDraftAction, now }) {
   const meta = roleMeta(message.role)
   const isUser = message.role === 'user'
   const isStreamingAssistant = message.role === 'assistant' && message.streaming
@@ -544,7 +570,7 @@ function MessageRow({ message, sending, onDraftAction, now, onAutoScroll }) {
       ) : null}
 
       <div
-        className={`min-w-0 max-w-[min(78%,760px)] ${isUser ? 'items-end' : 'items-start'}`}
+        className={`min-w-0 max-w-[min(82%,860px)] ${isUser ? 'items-end' : 'items-start'}`}
       >
         <div className={`mb-1 flex items-center gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
           <p className="text-sm font-semibold text-[var(--text)]">{meta.label}</p>
@@ -567,15 +593,14 @@ function MessageRow({ message, sending, onDraftAction, now, onAutoScroll }) {
 
         {!isUser ? (
           <>
-            <AgentThoughtProcess
-              events={visibleAgentTrace}
-              streaming={message.streaming}
-              onAutoScroll={onAutoScroll}
-            />
+            <AgentThoughtProcess events={visibleAgentTrace} streaming={message.streaming} />
             <div
-              className="mt-3 whitespace-pre-wrap break-words rounded-[1.4rem] rounded-bl-md bg-[rgba(255,255,255,0.78)] px-4 py-3 text-[15px] leading-7 tracking-[0.005em] text-[var(--text)] shadow-[0_14px_36px_rgba(77,92,123,0.08)] ring-1 ring-[rgba(35,52,76,0.06)] backdrop-blur-xl sm:text-[16px]"
+              className="mt-3 rounded-[1.4rem] rounded-bl-md bg-[rgba(255,255,255,0.78)] px-4 py-3 shadow-[0_14px_36px_rgba(77,92,123,0.08)] ring-1 ring-[rgba(35,52,76,0.06)] backdrop-blur-xl"
             >
-              {message.content || (isWaitingFirstToken ? 'FitMind 正在理解你的记录...' : '')}
+              <MarkdownMessage
+                content={message.content}
+                fallback={isWaitingFirstToken ? 'FitMind 正在理解你的记录...' : ''}
+              />
             </div>
             <DraftActionCard
               card={message.draftCard}
@@ -613,14 +638,21 @@ function ChatWorkspace({ session, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [thinkingNow, setThinkingNow] = useState(Date.now())
-  const viewportRef = useRef(null)
-  const bottomAnchorRef = useRef(null)
+  const [thinkingNow, setThinkingNow] = useState(0)
+  const {
+    viewportRef,
+    bottomAnchorRef,
+    requestAutoScroll,
+    resumeAutoScroll,
+    handleScroll: handleSmartScroll,
+    handleWheel,
+    handleTouchMove,
+  } = useSmartAutoScroll({ threshold: 96 })
   const composerRef = useRef(null)
+  const isComposingRef = useRef(false)
   const assistantMessageIdRef = useRef(null)
   const typewriterQueueRef = useRef('')
   const typewriterTimerRef = useRef(null)
-  const bottomLockTimerRef = useRef(null)
   const streamStartedAtRef = useRef(0)
   const firstTokenAtRef = useRef(null)
   const pendingFinishRef = useRef(false)
@@ -632,46 +664,6 @@ function ChatWorkspace({ session, onLogout }) {
   )
 
   const groupedSessions = useMemo(() => groupSessionsByDate(sessions), [sessions])
-
-  const scrollChatToBottom = (behavior = 'smooth') => {
-    const viewport = viewportRef.current
-    if (!viewport) {
-      return
-    }
-
-    const scroll = (nextBehavior = behavior) => {
-      viewport.scrollTo({
-        top: viewport.scrollHeight,
-        behavior: nextBehavior,
-      })
-    }
-
-    window.requestAnimationFrame(() => {
-      scroll(behavior)
-      window.requestAnimationFrame(() => {
-        scroll('auto')
-      })
-      window.setTimeout(() => scroll('auto'), 80)
-      window.setTimeout(() => scroll('auto'), 220)
-    })
-  }
-
-  const stopBottomLock = () => {
-    if (!bottomLockTimerRef.current) {
-      return
-    }
-
-    window.clearInterval(bottomLockTimerRef.current)
-    bottomLockTimerRef.current = null
-  }
-
-  const startBottomLock = () => {
-    stopBottomLock()
-    scrollChatToBottom('auto')
-    bottomLockTimerRef.current = window.setInterval(() => {
-      scrollChatToBottom('auto')
-    }, 120)
-  }
 
   const finishAssistantTyping = () => {
     const assistantId = assistantMessageIdRef.current
@@ -692,11 +684,7 @@ function ChatWorkspace({ session, onLogout }) {
     assistantMessageIdRef.current = null
     pendingFinishRef.current = false
     setSending(false)
-    scrollChatToBottom('smooth')
-    window.setTimeout(() => {
-      stopBottomLock()
-      scrollChatToBottom('auto')
-    }, 320)
+    requestAutoScroll('smooth')
   }
 
   const scheduleTypewriter = () => {
@@ -750,7 +738,7 @@ function ChatWorkspace({ session, onLogout }) {
     }
 
     if (!firstTokenAtRef.current) {
-      const now = performance.now()
+      const now = getPerfNow()
       firstTokenAtRef.current = now
       const thinkingMs = streamStartedAtRef.current ? now - streamStartedAtRef.current : 0
       const assistantId = assistantMessageIdRef.current
@@ -777,9 +765,9 @@ function ChatWorkspace({ session, onLogout }) {
     scheduleTypewriter()
   }
 
-  useLayoutEffect(() => {
-    scrollChatToBottom(sending ? 'auto' : 'smooth')
-  }, [messages, sending])
+  useEffect(() => {
+    requestAutoScroll(sending ? 'auto' : 'smooth')
+  }, [messages, sending, requestAutoScroll])
 
   useEffect(() => {
     if (!sending) {
@@ -787,7 +775,7 @@ function ChatWorkspace({ session, onLogout }) {
     }
 
     const timer = window.setInterval(() => {
-      setThinkingNow(Date.now())
+        setThinkingNow(getTimestampMs())
     }, 200)
 
     return () => {
@@ -800,7 +788,6 @@ function ChatWorkspace({ session, onLogout }) {
       if (typewriterTimerRef.current) {
         window.clearTimeout(typewriterTimerRef.current)
       }
-      stopBottomLock()
     },
     [],
   )
@@ -937,6 +924,7 @@ function ChatWorkspace({ session, onLogout }) {
     try {
       const created = await createSessionRecordForUser(userId)
       setSessions((current) => [created, ...current])
+      resumeAutoScroll('auto')
       setActiveSessionId(created.id)
       setMessages([emptyAssistantCard])
       setConnectionState('新会话已创建')
@@ -953,6 +941,7 @@ function ChatWorkspace({ session, onLogout }) {
       return
     }
 
+    resumeAutoScroll('auto')
     setActiveSessionId(sessionId)
     setConnectionState('已切换会话')
     setSidebarOpen(false)
@@ -976,7 +965,7 @@ function ChatWorkspace({ session, onLogout }) {
 
     const assistantId = buildMessageId('assistant')
     assistantMessageIdRef.current = assistantId
-    streamStartedAtRef.current = performance.now()
+    streamStartedAtRef.current = getPerfNow()
     firstTokenAtRef.current = null
     typewriterQueueRef.current = ''
     pendingFinishRef.current = false
@@ -998,7 +987,7 @@ function ChatWorkspace({ session, onLogout }) {
           content: '',
           streaming: true,
           createdAt: new Date().toISOString(),
-          requestStartedAtMs: Date.now(),
+          requestStartedAtMs: getTimestampMs(),
           agentTrace: [],
         },
       ]
@@ -1006,10 +995,9 @@ function ChatWorkspace({ session, onLogout }) {
 
     setDraft('')
     setSending(true)
-    setThinkingNow(Date.now())
+    setThinkingNow(getTimestampMs())
     setConnectionState('正在思考')
-    startBottomLock()
-    scrollChatToBottom('auto')
+    resumeAutoScroll('auto')
 
     try {
       const response = await fetch(`${apiBaseUrl}/chat/stream`, {
@@ -1066,7 +1054,7 @@ function ChatWorkspace({ session, onLogout }) {
                 : message,
             ),
           )
-          scrollChatToBottom('auto')
+          requestAutoScroll('auto')
           if (event.title) {
             setConnectionState(event.title)
           }
@@ -1083,17 +1071,17 @@ function ChatWorkspace({ session, onLogout }) {
                       ...message,
                       draftCard,
                     }
-                  : message,
+                : message,
               ),
             )
-            scrollChatToBottom('auto')
+            requestAutoScroll('auto')
           }
           return
         }
 
         if (event.type === 'delta') {
           appendAssistantDelta(event.content ?? '')
-          scrollChatToBottom('auto')
+          requestAutoScroll('auto')
           setConnectionState('正在输入')
           return
         }
@@ -1104,7 +1092,7 @@ function ChatWorkspace({ session, onLogout }) {
             appendAssistantDelta(event.reply)
           }
           markAssistantDone()
-          scrollChatToBottom('smooth')
+          requestAutoScroll('smooth')
           if (event.intent) {
             const percent = Math.round((event.intent_confidence ?? 0) * 100)
             setConnectionState(`已完成 · ${event.intent} · ${percent}%`)
@@ -1136,7 +1124,6 @@ function ChatWorkspace({ session, onLogout }) {
             ),
           )
           assistantMessageIdRef.current = null
-          stopBottomLock()
         }
       }
 
@@ -1176,7 +1163,6 @@ function ChatWorkspace({ session, onLogout }) {
           ),
         )
         assistantMessageIdRef.current = null
-        stopBottomLock()
       }
 
       await refreshSessions(activeSession.id)
@@ -1196,14 +1182,12 @@ function ChatWorkspace({ session, onLogout }) {
         ),
       )
       assistantMessageIdRef.current = null
-      stopBottomLock()
-      scrollChatToBottom('auto')
+      requestAutoScroll('auto')
     } finally {
       if (!pendingFinishRef.current && !typewriterQueueRef.current) {
         assistantMessageIdRef.current = null
         setSending(false)
-        stopBottomLock()
-        scrollChatToBottom('auto')
+        requestAutoScroll('auto')
       }
     }
   }
@@ -1273,6 +1257,14 @@ function ChatWorkspace({ session, onLogout }) {
   }
 
   const handleComposerKeyDown = (event) => {
+    const nativeEvent = event.nativeEvent
+    const isImeConfirming =
+      nativeEvent.isComposing || isComposingRef.current || nativeEvent.keyCode === 229
+
+    if (isImeConfirming) {
+      return
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       handleSend()
@@ -1452,13 +1444,13 @@ function ChatWorkspace({ session, onLogout }) {
         </div>
       </aside>
 
-      <section className="relative mx-auto flex h-screen min-h-0 w-full max-w-[1400px] flex-col overflow-hidden px-5 pb-36 pt-24 sm:px-8 sm:pt-28">
-        <header className="mx-auto flex w-full max-w-[800px] items-start justify-between gap-4">
+      <section className="relative mx-auto flex h-screen min-h-0 w-[min(96vw,1560px)] flex-col overflow-hidden px-4 pb-32 pt-14 sm:px-6 sm:pt-16 lg:px-8">
+        <header className="mx-auto flex w-full max-w-[1120px] items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--text-faint)]">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
               FitMind Console
             </p>
-            <h1 className="mt-3 font-display text-[2.45rem] leading-[0.92] tracking-[-0.05em] text-[var(--text)] sm:text-[3.1rem]">
+            <h1 className="mt-1.5 max-w-[760px] truncate font-display text-[1.55rem] leading-tight tracking-[-0.04em] text-[var(--text)] sm:text-[1.95rem]">
               {activeSession ? formatSessionTitle(activeSession, 0) : '准备你的下一次记录'}
             </h1>
           </div>
@@ -1470,16 +1462,19 @@ function ChatWorkspace({ session, onLogout }) {
 
         <div
           ref={viewportRef}
-          className="app-scrollbar relative mt-8 min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          onScroll={handleSmartScroll}
+          onWheel={handleWheel}
+          onTouchMove={handleTouchMove}
+          className="app-scrollbar relative mt-5 min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <div className="mx-auto w-full max-w-[880px] pb-40">
-            <div className="mb-8 flex flex-wrap gap-2">
+          <div className="mx-auto w-full max-w-[1120px] pb-36">
+            <div className="mb-4 flex flex-wrap gap-2">
               {quickPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
                   onClick={() => handleSend(prompt)}
-                  className="rounded-full bg-[rgba(90,108,180,0.05)] px-4 py-2 text-sm text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(90,108,180,0.09)] hover:text-[var(--text)]"
+                  className="rounded-full bg-[rgba(90,108,180,0.05)] px-3.5 py-1.5 text-xs font-medium text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(90,108,180,0.09)] hover:text-[var(--text)]"
                 >
                   {prompt}
                 </button>
@@ -1500,7 +1495,6 @@ function ChatWorkspace({ session, onLogout }) {
                     message={message}
                     sending={sending}
                     now={thinkingNow}
-                    onAutoScroll={() => scrollChatToBottom('smooth')}
                     onDraftAction={handleDraftAction}
                   />
                 ))}
@@ -1510,8 +1504,8 @@ function ChatWorkspace({ session, onLogout }) {
           </div>
         </div>
 
-        <div className="pointer-events-none fixed bottom-5 left-1/2 z-30 w-[min(920px,calc(100%-1.5rem))] -translate-x-1/2 sm:w-[min(920px,calc(100%-3rem))]">
-          <div className="mx-auto max-w-[860px]">
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-30 w-[min(1120px,calc(100%-1.5rem))] -translate-x-1/2 sm:w-[min(1120px,calc(100%-3rem))]">
+          <div className="mx-auto max-w-[1040px]">
             {errorMessage ? (
               <div className="pointer-events-auto mb-3 rounded-[1.4rem] bg-[rgba(255,255,255,0.86)] px-4 py-3 text-sm text-[var(--danger)] shadow-[0_14px_35px_rgba(215,99,99,0.08)] backdrop-blur-xl">
                 {errorMessage}
@@ -1524,6 +1518,12 @@ function ChatWorkspace({ session, onLogout }) {
                   ref={composerRef}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false
+                  }}
                   onKeyDown={handleComposerKeyDown}
                   placeholder="记录今天的训练、饮食、睡眠或体重变化..."
                   rows={1}

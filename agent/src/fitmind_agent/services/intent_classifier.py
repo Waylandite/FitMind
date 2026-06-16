@@ -26,7 +26,7 @@ INTENT_KEYWORDS: dict[IntentCode, tuple[str, ...]] = {
         "kg",
         "公斤",
     ),
-    "recent_workout_summary": (
+    "recent_health_summary": (
         "最近",
         "这几天",
         "这周",
@@ -35,6 +35,12 @@ INTENT_KEYWORDS: dict[IntentCode, tuple[str, ...]] = {
         "回顾",
         "分析一下",
         "训练情况",
+        "饮食情况",
+        "身体状态",
+        "恢复情况",
+        "最近状态",
+        "最近表现",
+        "健康情况",
     ),
     "today_workout_recommendation": (
         "今天练什么",
@@ -90,7 +96,7 @@ INTENT_KEYWORDS: dict[IntentCode, tuple[str, ...]] = {
 
 VALID_INTENTS: set[IntentCode] = {
     "today_workout_record",
-    "recent_workout_summary",
+    "recent_health_summary",
     "today_workout_recommendation",
     "today_nutrition_record",
     "today_body_status_record",

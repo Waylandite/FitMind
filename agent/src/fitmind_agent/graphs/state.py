@@ -6,7 +6,7 @@ The intent types defined here ("plan", "training", "nutrition", "body_status",
   schemas/intent.py
 
 Actual intent codes:
-  today_workout_record, recent_workout_summary, today_workout_recommendation,
+  today_workout_record, recent_health_summary, today_workout_recommendation,
   today_nutrition_record, today_body_status_record, user_workout_plan_update,
   general_chat, unknown
 """

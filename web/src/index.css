@@ -197,6 +197,44 @@ select {
   animation: thoughtStepIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.markdown-message {
+  overflow-wrap: anywhere;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3 {
+  margin: 0.85rem 0 0.45rem;
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
+  color: var(--text);
+}
+
+.markdown-message h1 {
+  font-size: 1.35rem;
+}
+
+.markdown-message h2 {
+  font-size: 1.18rem;
+}
+
+.markdown-message h3 {
+  font-size: 1.04rem;
+}
+
+.markdown-message pre code {
+  color: #edf4ff;
+}
+
 .hourglass-flow {
   position: relative;
   display: inline-flex;

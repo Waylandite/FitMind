@@ -59,7 +59,7 @@ function compactJson(value) {
   }
 }
 
-function AgentThoughtProcess({ events = [], streaming = false, onAutoScroll }) {
+function AgentThoughtProcess({ events = [], streaming = false }) {
   const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef(null)
 
@@ -70,13 +70,7 @@ function AgentThoughtProcess({ events = [], streaming = false, onAutoScroll }) {
   )
 
   useEffect(() => {
-    if (!scrollRef.current) {
-      onAutoScroll?.()
-      return
-    }
-
-    if (!expanded) {
-      onAutoScroll?.()
+    if (!scrollRef.current || !expanded) {
       return
     }
 
@@ -85,13 +79,12 @@ function AgentThoughtProcess({ events = [], streaming = false, onAutoScroll }) {
         top: scrollRef.current.scrollHeight,
         behavior: 'smooth',
       })
-      onAutoScroll?.()
     })
 
     return () => {
       window.cancelAnimationFrame(frameId)
     }
-  }, [events, expanded, onAutoScroll])
+  }, [events, expanded])
 
   if (!events.length) {
     return null

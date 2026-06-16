@@ -5,6 +5,7 @@ from datetime import date
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import Session
 
 from fitmind_agent.db.models import UserWorkoutRecord
@@ -119,6 +120,24 @@ class WorkoutPlanRepository:
         self.session.refresh(plan)
         return plan
 
+    def list_active_plans(self, *, user_id: int, limit: int = 5) -> list[UserWorkoutPlan]:
+        stmt = (
+            select(UserWorkoutPlan)
+            .where(UserWorkoutPlan.user_id == user_id, UserWorkoutPlan.status == "active")
+            .order_by(UserWorkoutPlan.id.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_latest_plan(self, *, user_id: int) -> UserWorkoutPlan | None:
+        stmt = (
+            select(UserWorkoutPlan)
+            .where(UserWorkoutPlan.user_id == user_id)
+            .order_by(UserWorkoutPlan.id.desc())
+            .limit(1)
+        )
+        return self.session.scalar(stmt)
+
 
 class WorkoutRecordRepository:
     def __init__(self, session: Session) -> None:
@@ -164,6 +183,25 @@ class WorkoutRecordRepository:
             .order_by(UserWorkoutRecord.id.asc())
         )
         return list(self.session.scalars(stmt))
+
+    def list_between_dates(
+        self,
+        *,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[UserWorkoutRecord]:
+        stmt = (
+            select(UserWorkoutRecord)
+            .options(joinedload(UserWorkoutRecord.items))
+            .where(
+                UserWorkoutRecord.user_id == user_id,
+                UserWorkoutRecord.record_date >= start_date,
+                UserWorkoutRecord.record_date <= end_date,
+            )
+            .order_by(UserWorkoutRecord.record_date.asc(), UserWorkoutRecord.id.asc())
+        )
+        return list(self.session.scalars(stmt).unique())
 
     def replace_items(
         self,

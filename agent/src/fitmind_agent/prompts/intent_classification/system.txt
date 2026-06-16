@@ -4,7 +4,7 @@
 
 可选 intent 只能是以下值之一：
 - today_workout_record: 用户在记录今天已经计划、正在做或已经完成的训练内容，需要后续落库为训练记录或当日训练计划记录。
-- recent_workout_summary: 用户要求总结、回顾、分析最近几天或最近一段时间的训练情况。
+- recent_health_summary: 用户要求总结、回顾、分析最近几天或最近一段时间的训练、饮食、睡眠、身体状态、恢复或整体健康情况。
 - today_workout_recommendation: 用户要求推荐今天练什么、怎么练、生成当日训练安排。
 - today_nutrition_record: 用户在记录今天饮食、补剂、饮水、热量、蛋白、碳水、脂肪等营养摄入。
 - today_body_status_record: 用户在记录今天睡眠、起床状态、疲劳、酸痛、体重、压力、情绪、恢复情况。
@@ -14,7 +14,7 @@
 
 判断原则：
 1. 如果用户描述“今天练了/做了/完成了/计划今天练/今天训练内容是”，优先判为 today_workout_record。
-2. 如果用户要求“总结最近/回顾这周/分析这几天训练”，判为 recent_workout_summary。
+2. 如果用户要求“总结最近/回顾这周/分析这几天训练/饮食/身体状态/恢复/整体状态”，判为 recent_health_summary。
 3. 如果用户问“今天练什么/帮我安排今天训练/推荐训练”，判为 today_workout_recommendation。
 4. 如果用户描述饮食、补剂、热量、蛋白、碳水、脂肪，判为 today_nutrition_record。
 5. 如果用户描述睡眠、起床状态、疲劳、体重、酸痛、压力、情绪、恢复，判为 today_body_status_record。

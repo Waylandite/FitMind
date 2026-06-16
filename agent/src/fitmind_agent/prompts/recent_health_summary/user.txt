@@ -1,0 +1,22 @@
+用户问题：
+{{user_query}}
+
+统计范围：
+{{start_date}} 至 {{end_date}}
+
+当前长期训练计划：
+{{workout_plans}}
+
+用户最新一次训练计划：
+{{latest_workout_plan}}
+
+最近 7 天训练记录：
+{{workout_records}}
+
+最近 7 天饮食记录：
+{{nutrition_records}}
+
+最近 7 天身体状态记录：
+{{body_status_records}}
+
+请结合以上三维度数据，按系统模板输出最近 7 天健康与训练状态总结。

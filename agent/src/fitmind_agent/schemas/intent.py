@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 IntentCode = Literal[
     "today_workout_record",
-    "recent_workout_summary",
+    "recent_health_summary",
     "today_workout_recommendation",
     "today_nutrition_record",
     "today_body_status_record",
