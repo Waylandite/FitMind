@@ -31,6 +31,9 @@ from fitmind_agent.services.prompt_loader import PromptLoader
 from fitmind_agent.services.recent_health_summary_service import RecentHealthSummaryService
 from fitmind_agent.services.session_summary_service import SessionSummaryService
 from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
+from fitmind_agent.services.today_workout_recommendation_service import (
+    TodayWorkoutRecommendationService,
+)
 from fitmind_agent.services.workout_plan_service import WorkoutPlanService
 from fitmind_agent.services.workout_record_service import WorkoutRecordService
 
@@ -107,6 +110,37 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=reply,
+                )
+            recommendation_result = None
+            for recommendation_event in TodayWorkoutRecommendationService(
+                llm_service=self.llm_service,
+            ).stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            ):
+                if recommendation_event.get("kind") == "result":
+                    recommendation_result = recommendation_event.get("result")
+
+            if recommendation_result is not None and recommendation_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=recommendation_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                return ChatResponse(
+                    user_id=payload.user_id,
+                    thread_id=payload.thread_id,
+                    session_id=session_id,
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source,
+                    module_name=module_route.module_name,
+                    module_status=module_route.status,
+                    model="fitmind-workflow",
+                    reply=recommendation_result.reply,
                 )
             nutrition_result = NutritionRecordService(
                 db=self.db,
@@ -391,6 +425,60 @@ class ChatService:
                         "workflow": {
                             "name": "recent_health_summary",
                             "action": summary_result.action,
+                        },
+                    }
+                )
+                return
+
+            recommendation_service = TodayWorkoutRecommendationService(
+                llm_service=self.llm_service,
+            )
+            recommendation_result = None
+            for recommendation_event in recommendation_service.stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            ):
+                if recommendation_event.get("kind") == "progress":
+                    yield self._format_sse(
+                        {
+                            "type": "agent_state",
+                            **(recommendation_event.get("event") or {}),
+                        }
+                    )
+                    continue
+                if recommendation_event.get("kind") == "result":
+                    recommendation_result = recommendation_event.get("result")
+
+            if recommendation_result is not None and recommendation_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=recommendation_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield from self._format_text_delta_events(
+                    recommendation_result.reply,
+                    model="fitmind-workflow",
+                )
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": recommendation_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "today_workout_recommendation",
+                            "action": recommendation_result.action,
                         },
                     }
                 )

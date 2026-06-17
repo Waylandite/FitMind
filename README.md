@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-2F6690?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-0E7C66?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Agent_Workflow-1F3A5F?style=for-the-badge)](https://www.langchain.com/langgraph)
+[![LangGraph](https://img.shields.io/badge/LangGraph-ReAct_Loop-1F3A5F?style=for-the-badge)](https://www.langchain.com/langgraph)
 [![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-ORM-AA2B1D?style=for-the-badge&logo=sqlalchemy&logoColor=white)](https://www.sqlalchemy.org/)
 [![Alembic](https://img.shields.io/badge/Alembic-Migration-5B4B8A?style=for-the-badge)](https://alembic.sqlalchemy.org/)
 [![MySQL](https://img.shields.io/badge/MySQL-Storage-005C84?style=for-the-badge&logo=mysql&logoColor=white)](https://www.mysql.com/)
@@ -32,7 +32,7 @@
 - 昨晚没睡好，今天状态一般
 - 晚饭吃了鸡胸、米饭和蛋白粉
 
-FitMind 想解决的不是“陪聊”，而是：
+FitMind 想解决的不是"陪聊"，而是：
 
 - 听懂这些自然语言表达
 - 拆成训练计划、训练结果、身体状态、饮食记录
@@ -49,68 +49,64 @@ FitMind 想解决的不是“陪聊”，而是：
 
 FitMind 当前由两部分组成：
 
-- `web`
-  提供登录体验、对话页和用户交互入口
-- `agent`
-  提供 Python API、LangGraph 工作流骨架和后续数据处理能力
+- `web` — 提供登录体验、对话页和用户交互入口
+- `agent` — 提供 Python API、意图识别、服务链编排和领域数据处理能力
 
-核心目标是构建一条完整链路：
+架构采用 **顺序服务链** 模式（详见 [agent-architecture.md](docs/agent-architecture.md)）：
 
 ```text
 自然语言输入
-  -> Web 对话界面
-  -> Python Agent API
-  -> 意图识别与 Agent 工作流
-  -> 健身结构化事实
-  -> 数据库存储与后续分析
+  → Web 对话界面
+  → ChatService（主编排器、session 管理）
+  → IntentClassifier（关键词 + LLM 双模意图分类）
+  → IntentRouter（意图 → 模块路由）
+  → ServiceChain（健康总结 → 训练推荐 → 饮食 → 身体状态 → 训练记录 → 计划更新）
+  → 草稿确认 → 结构化落库
 ```
 
 ---
 
-## 核心能力
+## 已实现功能
 
-### 1. 训练计划记录
+### 记录类（写入 + 草稿确认）
 
-- 识别训练部位、动作、组数、次数、重量
-- 支持日计划、周计划和自然语言补充
+| 功能 | 意图 | 说明 |
+|------|------|------|
+| 当日训练记录 | `today_workout_record` | 提取训练动作、组数、重量，草稿确认后写入 `user_workout_records` + `user_workout_record_items` |
+| 当日饮食记录 | `today_nutrition_record` | LangGraph ReAct 循环驱动工具调用（食物查询、份量估算、营养计算、累计汇总），草稿确认后写入 `user_nutrition_records` |
+| 当日身体状态 | `today_body_status_record` | 提取睡眠、疲劳、压力、酸痛、体重、情绪，草稿确认后写入 `user_body_status_records` |
+| 训练计划更新 | `user_workout_plan_update` | 提取长期训练计划标题、日期、内容，草稿确认后写入 `user_workout_plans` |
 
-### 2. 训练结果记录
+### 查询类（流式 + 直接返回）
 
-- 记录实际完成情况
-- 支持计划与实际偏差对比
-- 支持动作、组次、重量、时长等结构化提取
+| 功能 | 意图 | 说明 |
+|------|------|------|
+| 最近健康总结 | `recent_health_summary` | 并发查询最近 7 天训练、饮食、身体状态和长期计划，LLM 汇总生成结构化总结 |
+| 今日训练推荐 | `today_workout_recommendation` | 并发查询最新长期计划和最近 7 天训练记录，LLM 结合恢复状态生成训练建议 |
 
-### 3. 身体状态记录
+### 对话与系统
 
-- 独立识别 `today_body_status_record`
-- 记录睡眠、疲劳、酸痛、体重、压力、心情和恢复状态
-- 支持同日多次记录，`raw_text` 按时间刻度追加
-- 结构化字段保留最新非空快照
-- 为训练解释和后续建议提供上下文
+| 功能 | 说明 |
+|------|------|
+| 普通 LLM 对话 | 带 session summary 上下文压缩的多轮对话 |
+| 草稿确认机制 | 所有业务写入均经过 `提取 → 草稿 → 确认 → 持久化` 四段流程 |
+| 多轮上下文感知 | pending workflow context 检测，自动识别确认/取消/修正意图 |
+| Agent 执行可视化 | 前端实时展示工具调用过程（状态标签、工具名、参数、返回、耗时） |
+| 意图识别日志 | 每次分类结果写入 `intent_recognition_logs`，支撑效果评估和 prompt 迭代 |
+| Token 统计 | 单次 LLM 调用明细（`llm_call_logs`）+ 每轮对话聚合（`chat_turn_token_usage`），旁路异步写入 |
+| SSE 流式响应 | Intent → Session → Agent State → Workflow → Delta → Done 六级事件序列 |
 
-### 4. 饮食与补剂记录
+---
 
-- 独立识别 `today_nutrition_record`
-- 记录餐次、食物、份量、补剂和营养估算
-- 模型只计算“本次新增饮食”，避免历史记录干扰本次食物识别
-- 用户确认后由后端确定性累加到当天饮食记录
-- `raw_text` 按时间刻度追加，并写入保存后的今日累计值
-- 已接入 LangGraph ReAct 营养 loop，由模型自主选择工具计算热量、蛋白、碳水和脂肪，并预留 MCP provider 扩展
+## 未实现功能
 
-### 5. 修改与补录
-
-- 支持用户通过自然语言纠正历史记录
-- 支持补充漏记的数据
-- 训练、饮食、身体状态和长期计划均支持草稿确认流程
-- 前端支持草稿卡片操作：确认保存、取消保存、纠正错误
-
-### 6. Token 使用统计
-
-- 按单次模型调用记录 token 明细到 `llm_call_logs`
-- 按一轮用户对话聚合 token 到 `chat_turn_token_usage`
-- 区分模型类型、供应商、workflow、节点、输入 token、输出 token 和总 token
-- 使用后台线程异步写入，统计失败不阻塞主业务链路
-- 支持流式与非流式调用统计，供应商未返回 usage 时标记为估算或不可用
+| 功能 | 说明 |
+|------|------|
+| 澄清追问 | `unknown` 意图已预留路由，当置信度不足时的主动追问逻辑待实现 |
+| 训练日志查询回顾 | 按日期/部位/动作查询历史训练记录 |
+| 周报与趋势分析 | 基于结构化数据的健身趋势可视化和复盘 |
+| 记忆冲突处理 | Agent 提取的长期记忆与用户显式记忆冲突时的协调机制 |
+| 移动端适配 | 当前以桌面端为主 |
 
 ---
 
@@ -118,94 +114,41 @@ FitMind 当前由两部分组成：
 
 ### 前端
 
-- `React`
-- `Vite`
-- `Tailwind CSS`
-
-负责：
-
-- 登录页与产品首页
-- 对话工作台
-- 后续训练记录与日志查看界面
+- `React 19` + `Vite 8` + `Tailwind CSS 4`
+- SSE 流式消费 + 打字机渲染
+- Agent 执行过程时间线可视化（`AgentThoughtProcess`）
+- 草稿确认卡片交互（确认保存 / 取消保存 / 纠正错误）
 
 ### 后端 Agent
 
-- `Python 3.11+`
-- `FastAPI`
-- `Pydantic`
-- `LangChain / LangGraph`
-- `OpenAI Compatible SDK`
-- `DeepSeek Official API`
-
-负责：
-
-- 提供 Web 调用的 API
-- 承接用户对话消息
-- 路由训练、状态、饮食等意图
-- 输出结构化结果
-- 维护多轮对话上下文
-- 提供 SSE 流式返回
-- 记录意图识别结果，方便追踪和调试
-- 提供草稿确认、取消、纠错工作流
-- 为饮食记录提供 ReAct 工具调用链路
-- 记录模型 token 消耗，便于测试和成本分析
+- `Python 3.11+` + `FastAPI` + `Pydantic`
+- 架构：`IntentClassifier → IntentRouter → ServiceChain`
+- 意图识别：关键词规则预判 + LLM 结构化分类，双模决策
+- 营养链路：LangGraph ReAct 循环 + MCP-ready 工具提供者
+- 查询链路：`ThreadPoolExecutor` 并发查询数据库 + LLM 汇总生成
+- `DeepSeekLLMClient`（OpenAI-compatible SDK）
 
 ### 数据层
 
-当前仓库已经完成新的数据库与迁移基础设施，重点围绕：
+- `MySQL 8.0+` + `SQLAlchemy 2.0` + `Alembic`
+- 19 张核心表：用户、档案、训练计划/记录/明细、饮食、身体状态、4 张草稿表、对话日志、意图日志、Session/摘要、两层记忆、LLM 调用日志、Token 汇总
 
-- `MySQL`
-- `SQLAlchemy 2.0`
-- `Alembic`
-- 普通用户表
-- 健身档案
-- 训练计划
-- 训练执行
-- 身体状态
-- 饮食记录
-- 对话日志
-- 意图识别日志
-- LLM 调用 token 明细
-- 对话轮次 token 汇总
-- Session 短期记忆
-- 水位线 Summary 压缩
-
-详见：
-
-- [docs/database-design.md](docs/database-design.md)
+详见 [docs/database-design.md](docs/database-design.md)
 
 ---
 
-## 当前仓库结构
+## 项目时间线
 
-```text
-FitMind/
-  agent/    # Python Agent 服务，API 与 LangGraph 骨架
-  web/      # React Web 应用，登录页与对话页
-  docs/     # 项目设计文档与备份说明
-  README.md
-```
-
----
-
-## 已完成内容
-
-- 登录页与对话页前端原型
-- Web 对话页接入后端流式 SSE Chat
-- Python Agent API、DeepSeek 官方模型接入
-- MySQL + SQLAlchemy + Alembic 数据层落地
-- 健身数据导向的核心表与记忆表设计
-- Session 级多轮上下文窗口
-- 基于水位线的历史 Summary 压缩机制
-- 对话日志持久化与本地联调验证
-- 意图识别结果落库到 `intent_recognition_logs`
-- 当日训练记录：结构化提取、用户确认、动作明细落库
-- 当日饮食记录：独立意图、LangGraph ReAct 工具循环、本次新增计算、确认后累加到当天记录
-- 当日身体状态记录：独立意图、草稿确认、身体状态表落库
-- 用户长期训练计划更新：草稿确认后增量写入计划表
-- 前端草稿卡片：确认保存、取消保存、纠正错误回填输入框
-- Token 使用统计：单次模型调用明细与一轮对话聚合统计
-- 饮食和身体状态表已移除 `remark`，统一使用 `raw_text` 保存原始流水
+| 日期 | 提交 | 更新内容 |
+|------|------|---------|
+| 2026-06-16 | `49d2e47` | 新增最近健康总结，并发查询训练/饮食/身体状态/计划 |
+| 2026-06-16 | `c3f2b91` | 前端 Agent 执行过程可视化，完善训练记录展示 |
+| 2026-06-15 | `9422e5e` | 新增 LLM token 使用统计（调用明细 + 对话聚合） |
+| 2026-06-14 | `53f91da` | 饮食记录接入 LangGraph ReAct 循环，身体状态独立草稿流程 |
+| 2026-06-13 | `fae775a` | 新增意图识别 + 路由系统，训练记录草稿确认流程 |
+| 2026-06-11 | `54ad105` | 流式 SSE 对话、Session 管理、上下文压缩 |
+| 2026-06-09 | `a3508c3` | README 重构，项目定位和核心能力说明 |
+| 2026-06-09 | `79e9b85` | 项目初始化，前端原型 + Agent API 骨架 |
 
 ---
 
@@ -213,20 +156,34 @@ FitMind/
 
 ### 近期
 
-- Session Summary 与长期记忆联动
-- 完善最近训练总结和今日训练推荐模块
-- 在前端展示每轮对话 token 消耗和 session 累计消耗
+- 当前轮：完善今日训练推荐，更新文档一致性
+- 澄清追问模块（`unknown` 意图路由已预留）
+- 前端展示每轮对话 token 消耗和 session 累计消耗
 
 ### 中期
 
-- 支持训练日志查询与回顾
+- 训练日志查询与回顾界面
 - 构建可解释的健身记忆系统
+- 记忆冲突处理与人工确认
 
 ### 后续
 
-- 引入更完整的 LangGraph 工作流
-- 增强结构化追问和工具调用
-- 支持周报、复盘和趋势分析
+- 周报、复盘和趋势分析
+- 移动端适配
+- 支持自定义训练计划周期模板
+
+---
+
+## 当前仓库结构
+
+```text
+FitMind/
+  agent/       # Python Agent 服务，API 与领域服务链
+  web/         # React Web 应用，登录页与对话页
+  docs/        # 项目设计文档
+  dataset/     # 测试用例与评估数据
+  README.md
+```
 
 ---
 
@@ -262,26 +219,18 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 
 ## 相关文档
 
-- [docs/project-overview.md](docs/project-overview.md)  
-  原始长版项目说明备份
-
-- [docs/agent-architecture.md](docs/agent-architecture.md)  
-  Agent 与子 Agent 架构说明
-
-- [docs/database-design.md](docs/database-design.md)  
-  面向健身计划与训练数据的数据库设计
-
-- [docs/intent-system.md](docs/intent-system.md)  
-  当前支持的意图类型、路由模块和实现状态
-
-- [docs/nutrition-react-design.md](docs/nutrition-react-design.md)  
-  饮食记录 ReAct / MCP 工具调用设计
-
-- [docs/nutrition-tools-contract.md](docs/nutrition-tools-contract.md)  
-  从自然语言饮食描述到热量和宏量营养计算的工具契约
-
-- [docs/token-usage-design.md](docs/token-usage-design.md)  
-  LLM token 使用统计、调用明细与对话聚合设计
+| 文档 | 说明 |
+|------|------|
+| [docs/agent-architecture.md](docs/agent-architecture.md) | Agent 架构设计，服务链编排、意图系统、执行链路 |
+| [docs/intent-system.md](docs/intent-system.md) | 意图类型、路由模块和实现状态 |
+| [docs/database-design.md](docs/database-design.md) | 面向健身数据的 19 张核心表设计 |
+| [docs/memory-system-design.md](docs/memory-system-design.md) | 三层记忆体系与 Session 管理 |
+| [docs/nutrition-react-design.md](docs/nutrition-react-design.md) | 饮食记录 ReAct / MCP 工具调用设计 |
+| [docs/nutrition-tools-contract.md](docs/nutrition-tools-contract.md) | 饮食工具调用契约与数据格式 |
+| [docs/token-usage-design.md](docs/token-usage-design.md) | LLM token 统计、调用明细与对话聚合设计 |
+| [docs/project-overview.md](docs/project-overview.md) | 原始长版项目说明备份 |
+| [docs/intent-routing-test-report.md](docs/intent-routing-test-report.md) | 意图识别联调测试报告 |
+| [docs/workout-record-workflow-report.md](docs/workout-record-workflow-report.md) | 训练记录提取与确认流程报告 |
 
 ---
 
@@ -293,10 +242,10 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 
 ## 愿景
 
-FitMind 的目标不是把自己做成一个“会聊天的健身助手”，而是做成一个真正能沉淀健身数据的自然语言系统：
+FitMind 的目标不是把自己做成一个"会聊天的健身助手"，而是做成一个真正能沉淀健身数据的自然语言系统：
 
 - 让用户更轻松地记录
 - 让训练数据更清晰地积累
 - 让后续分析、复盘和建议建立在真实数据之上
 
-如果你也对“AI + 健身记录 + 结构化数据”这个方向感兴趣，欢迎一起完善 FitMind。
+如果你也对"AI + 健身记录 + 结构化数据"这个方向感兴趣，欢迎一起完善 FitMind。

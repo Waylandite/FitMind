@@ -324,6 +324,15 @@ function isDraftGenerationTrace(event) {
     ].includes(event.node)
   }
 
+  if (event.workflow === 'today_workout_recommendation' || event.workflow === 'workout_recommendation_agent') {
+    return [
+      'recommendation_start',
+      'query_latest_workout_plan',
+      'query_recent_workout_records',
+      'recommendation_llm',
+    ].includes(event.node)
+  }
+
   return false
 }
 

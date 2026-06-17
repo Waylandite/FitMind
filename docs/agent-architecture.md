@@ -94,6 +94,8 @@ User
     → IntentClassifier (keyword rules → LLM classification)
     → IntentRouter (intent → module route)
     → [pending workflow context check]
+    → RecentHealthSummaryService.stream_maybe_handle()
+    → TodayWorkoutRecommendationService.stream_maybe_handle()
     → NutritionRecordService.maybe_handle()
     → BodyStatusRecordService.maybe_handle()
     → WorkoutRecordService.maybe_handle()
@@ -150,7 +152,7 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 支持的意图类型（定义在 `schemas/intent.py`）：
 
 - `today_workout_record`
-- `recent_workout_summary`
+- `recent_health_summary`
 - `today_workout_recommendation`
 - `today_nutrition_record`
 - `today_body_status_record`
@@ -166,25 +168,56 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 
 | 意图 | 模块名 | 状态 |
 | --- | --- | --- |
+| `recent_health_summary` | `workout_summary_agent` | ready |
+| `today_workout_recommendation` | `workout_recommendation_agent` | ready |
 | `today_workout_record` | `workout_record_writer` | ready |
 | `today_nutrition_record` | `nutrition_record_react_writer` | ready |
 | `today_body_status_record` | `body_status_writer` | ready |
 | `user_workout_plan_update` | `workout_plan_updater` | ready |
 | `general_chat` | `general_chat` | ready |
-| `recent_workout_summary` | `workout_summary_agent` | placeholder |
-| `today_workout_recommendation` | `workout_recommendation_agent` | placeholder |
 | `unknown` | `clarification_agent` | placeholder |
 
-### 5.4 领域 Service（maybe_handle 模式）
+### 5.4 领域 Service（maybe_handle / stream_maybe_handle 模式）
 
-每个领域 Service 实现统一的 `maybe_handle()` 接口：
+每个领域 Service 实现统一的处理接口：
+
+- `maybe_handle()` — 同步模式，用于需要草稿确认的业务（训练记录、饮食、身体状态、计划更新）
+- `stream_maybe_handle()` — 流式模式，用于查询/推荐类业务（健康总结、训练推荐），yield progress 事件 + 最终 result
 
 ```python
+# maybe_handle 模式（同步、草稿确认）
 def maybe_handle(self, *, user_id, session_id, user_query, intent_result) -> WorkflowResult:
     # 1. 检查是否存在 pending draft → 处理确认/取消/修正
     # 2. 检查 intent_result 是否匹配本 Service → 不匹配则返回 handled=False
     # 3. LLM 提取结构化 JSON → 写入 draft → 返回确认提示
+
+# stream_maybe_handle 模式（流式、直接返回）
+def stream_maybe_handle(self, *, user_id, user_query, intent_result) -> Iterator[dict]:
+    # 1. 检查 intent 是否匹配 → 不匹配则 yield handled=False
+    # 2. 并发查询数据库上下文 → yield progress 事件
+    # 3. LLM 生成结果 → yield progress 事件
+    # 4. yield 最终 result
 ```
+
+#### RecentHealthSummaryService
+
+位置：`agent/src/fitmind_agent/services/recent_health_summary_service.py`
+
+特点：
+- 流式 `stream_maybe_handle()` 模式，不经过草稿确认
+- 并发查询最近 7 天的训练记录、饮食记录、身体状态记录和长期训练计划（`ThreadPoolExecutor(5)`）
+- LLM 汇总生成结构化健康总结
+- 通过 SSE progress 事件实时反馈查询进度
+
+#### TodayWorkoutRecommendationService
+
+位置：`agent/src/fitmind_agent/services/today_workout_recommendation_service.py`
+
+特点：
+- 流式 `stream_maybe_handle()` 模式，不经过草稿确认
+- 并发查询最新长期训练计划和最近 7 天训练记录（`ThreadPoolExecutor(2)`）
+- LLM 结合训练历史恢复状态和计划生成当日训练建议
+- 通过 SSE progress 事件实时反馈查询进度
 
 #### NutritionRecordService
 
@@ -400,7 +433,9 @@ agent/src/fitmind_agent/
     body_status_record_extraction/
     intent_classification/
     nutrition_react_loop/
+    recent_health_summary/
     session_summary/
+    today_workout_recommendation/
     workout_plan_update_extraction/
     workout_record_extraction/
   repositories/
@@ -428,7 +463,9 @@ agent/src/fitmind_agent/
     nutrition_react_tools.py  — ReAct 引擎和营养工具
     nutrition_record_service.py
     prompt_loader.py
+    recent_health_summary_service.py  — 最近 7 天健康总结
     session_summary_service.py
+    today_workout_recommendation_service.py  — 今日训练推荐
     token_usage_tracker.py    — Token 使用旁路统计
     workout_plan_service.py
     workout_record_service.py

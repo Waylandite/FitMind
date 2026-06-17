@@ -203,7 +203,8 @@ FitMind V1 的实际架构已演变为 **顺序服务链** 模式，详见 [agen
 
 ```
 用户消息 → IntentClassifier (关键词 + LLM) → IntentRouter (路由) →
-  ServiceChain (NutritionRecordService → BodyStatusRecordService →
+  ServiceChain (RecentHealthSummaryService → TodayWorkoutRecommendationService →
+  NutritionRecordService → BodyStatusRecordService →
   WorkoutRecordService → WorkoutPlanService) → fallback 对话
 ```
 
@@ -220,11 +221,11 @@ FitMind V1 的实际架构已演变为 **顺序服务链** 模式，详见 [agen
 | --- | --- | --- |
 | `WorkoutRecordService` | `today_workout_record` | 训练记录提取、草稿确认、动作明细落库 |
 | `RecentHealthSummaryService` | `recent_health_summary` | 最近 7 天训练、饮食、身体状态和长期计划并发查询与总结 |
+| `TodayWorkoutRecommendationService` | `today_workout_recommendation` | 读取最新长期计划和最近 7 天训练记录，生成今日训练建议 |
 | `NutritionRecordService` | `today_nutrition_record` | 饮食记录 ReAct 提取、营养工具调用、累计估算 |
 | `BodyStatusRecordService` | `today_body_status_record` | 睡眠/疲劳/酸痛/体重/情绪解析 |
 | `WorkoutPlanService` | `user_workout_plan_update` | 长期训练计划提取和更新 |
 
 ### 6.2 待实现的模块
 
-- `today_workout_recommendation` — 已预留路由，业务逻辑待实现
 - `unknown` 澄清追问 — 已预留路由，业务逻辑待实现

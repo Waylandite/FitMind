@@ -66,8 +66,8 @@ LLM 被要求只输出 JSON，例如：
 | 意图 | 中文含义 | 路由模块 | 数据类型 | 状态 | 当前能力 |
 | --- | --- | --- | --- | --- | --- |
 | `today_workout_record` | 当日训练记录 | `workout_record_writer` | `workout` | `ready` | 已支持训练数据提取、草稿确认、多轮修正、确认后写入训练记录表 |
-| `recent_workout_summary` | 最近训练情况总结 | `workout_summary_agent` | `query` | `placeholder` | 仅完成意图识别和路由，业务模块待实现 |
-| `today_workout_recommendation` | 当日训练计划推荐 | `workout_recommendation_agent` | `plan` | `placeholder` | 仅完成意图识别和路由，业务模块待实现 |
+| `recent_health_summary` | 最近健康情况总结 | `workout_summary_agent` | `query` | `ready` | 已接入最近 7 天训练、饮食、身体状态和长期计划的并发查询与总结 |
+| `today_workout_recommendation` | 当日训练计划推荐 | `workout_recommendation_agent` | `plan` | `ready` | 已接入最新长期计划和最近 7 天训练记录的并发查询与今日训练建议生成 |
 | `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` | `nutrition` | `ready` | 已支持 LangGraph ReAct 营养 loop、今日上下文填充、草稿确认和饮食表落库 |
 | `today_body_status_record` | 当日睡眠和身体状态记录 | `body_status_writer` | `body_status` | `ready` | 已支持睡眠、疲劳、酸痛、体重、情绪等解析和身体状态表落库 |
 | `user_workout_plan_update` | 用户健身计划更新 | `workout_plan_updater` | `plan` | `ready` | 已接入长期训练计划提取、草稿确认和增量入库模块 |
@@ -154,7 +154,38 @@ LLM 被要求只输出 JSON，例如：
 - `agent/src/fitmind_agent/repositories/workout.py`
 - `agent/src/fitmind_agent/prompts/workout_plan_update_extraction/`
 
-### 5.5 普通对话
+### 5.5 最近健康情况总结
+
+当最终意图是 `recent_health_summary` 时，系统会进入健康总结工作流：
+
+1. 通过 `ThreadPoolExecutor(5)` 并发查询最近 7 天的训练记录、饮食记录、身体状态记录和长期训练计划
+2. 各数据源查询完成后通过 SSE progress 事件实时反馈进度
+3. 汇总所有数据后调用 LLM 生成结构化健康总结
+4. 直接返回结果，不经过草稿确认
+
+相关文件：
+
+- `agent/src/fitmind_agent/services/recent_health_summary_service.py`
+- `agent/src/fitmind_agent/repositories/workout.py`
+- `agent/src/fitmind_agent/repositories/nutrition.py`
+- `agent/src/fitmind_agent/prompts/recent_health_summary/`
+
+### 5.6 当日训练计划推荐
+
+当最终意图是 `today_workout_recommendation` 时，系统会进入训练推荐工作流：
+
+1. 通过 `ThreadPoolExecutor(2)` 并发查询最新长期训练计划和最近 7 天训练记录
+2. 各数据源查询完成后通过 SSE progress 事件实时反馈进度
+3. LLM 结合训练历史恢复状态和长期计划生成当日训练建议
+4. 直接返回结果，不经过草稿确认
+
+相关文件：
+
+- `agent/src/fitmind_agent/services/today_workout_recommendation_service.py`
+- `agent/src/fitmind_agent/repositories/workout.py`
+- `agent/src/fitmind_agent/prompts/today_workout_recommendation/`
+
+### 5.7 普通对话
 
 当最终意图是 `general_chat`，或业务模块尚未接入时，当前系统会进入普通 LLM 对话流程。
 
@@ -222,15 +253,8 @@ limit 20;
 
 ## 7. 后续扩展建议
 
-推荐按以下顺序继续补齐业务模块：
+当前 6 个业务意图中 4 个已完整实现，仅剩 `unknown` 对应的澄清追问模块。推荐在数据积累更多后继续优化：
 
-1. `recent_workout_summary` — 最近训练情况总结
-2. `today_workout_recommendation` — 当日训练计划推荐
-3. `unknown` 对应的澄清追问模块
-
-`user_workout_plan_update` 已完成实现。
-
-原因：
-
-- 总结和推荐更依赖前面积累的结构化数据
-- 澄清追问可以最后统一抽象为通用能力
+1. `unknown` 澄清追问 — 当置信度不足时主动追问用户，缩小意图范围
+2. 意图识别精度优化 — 利用 `intent_recognition_logs` 中的错误分类做 prompt 迭代
+3. 健康总结和训练推荐的 LLM 质量迭代 — 收集真实用户反馈优化 prompt

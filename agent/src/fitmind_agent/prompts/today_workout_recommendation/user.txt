@@ -1,0 +1,18 @@
+当前日期：{{current_date}}
+查询区间：{{start_date}} 到 {{end_date}}
+
+用户问题：
+{{user_query}}
+
+最新长期训练计划 latest_workout_plan：
+{{latest_workout_plan}}
+
+最近 7 天训练记录 recent_workout_records：
+{{recent_workout_records}}
+
+请结合以上信息，给出今天的训练建议。
+如果数据不足，请在输出里明确说明缺少什么，但仍然给出可执行、保守、安全的推荐。
+不要反问，不要要求用户补充信息，直接输出建议。
+请尽量简洁，优先给出今天该怎么练，而不是长篇解释。
+请把回答写得像一张训练卡片，短一点、利落一点。
+请直接输出符合系统要求的 Markdown 正文。

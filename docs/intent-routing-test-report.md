@@ -6,7 +6,7 @@
 
 在用户对话进入主聊天流程后，先执行意图识别，再根据意图和置信度分流到对应业务模块。
 
-当前训练、饮食、身体状态和长期训练计划更新已经接入真实业务工作流；总结、推荐和澄清仍保留路由占位。
+当前训练、饮食、身体状态、长期训练计划更新、最近健康总结和当日训练推荐均已接入真实业务工作流；仅澄清仍保留路由占位。
 
 ## 本次实现
 
@@ -28,7 +28,7 @@
 | intent | 含义 | 预留模块 |
 | --- | --- | --- |
 | `today_workout_record` | 当日健身计划或训练记录落库 | `workout_record_writer` |
-| `recent_workout_summary` | 最近健身情况总结 | `workout_summary_agent` |
+| `recent_health_summary` | 最近健康情况总结 | `workout_summary_agent` |
 | `today_workout_recommendation` | 当日健身计划推荐 | `workout_recommendation_agent` |
 | `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` |
 | `today_body_status_record` | 当日睡眠和身体状态记录 | `body_status_writer` |
@@ -116,4 +116,4 @@ http://127.0.0.1:5173/
 
 本轮意图识别、置信度输出、模块分流、SSE 事件、前端展示和日志写入均已联调通过。
 
-下一步可以继续接入饮食 ReAct/MCP 工具深化、近期总结查询和今日训练推荐。计划更新已实现。
+下一步可以继续接入饮食 ReAct/MCP 工具深化和澄清追问模块。计划更新、健康总结和训练推荐已实现。

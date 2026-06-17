@@ -24,7 +24,8 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         intent="today_workout_recommendation",
         module_name="workout_recommendation_agent",
         db_intent_type="plan",
-        description="待接入当日训练计划推荐模块。",
+        description="已接入当日训练计划推荐模块。",
+        status="ready",
     ),
     "today_nutrition_record": IntentModuleRoute(
         intent="today_nutrition_record",
