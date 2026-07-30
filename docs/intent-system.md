@@ -68,6 +68,7 @@ LLM 被要求只输出 JSON，例如：
 | `today_workout_record` | 当日训练记录 | `workout_record_writer` | `workout` | `ready` | 已支持训练数据提取、草稿确认、多轮修正、确认后写入训练记录表 |
 | `recent_health_summary` | 最近健康情况总结 | `workout_summary_agent` | `query` | `ready` | 已接入最近 7 天训练、饮食、身体状态和长期计划的并发查询与总结 |
 | `today_workout_recommendation` | 当日训练计划推荐 | `workout_recommendation_agent` | `plan` | `ready` | 已接入最新长期计划和最近 7 天训练记录的并发查询与今日训练建议生成 |
+| `workout_history_query` | 训练日志查询与回顾 | `workout_history_query_service` | `query` | `ready` | 支持按日期、部位、动作筛选真实训练记录，并返回确定性统计和动作明细 |
 | `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` | `nutrition` | `ready` | 已支持 LangGraph ReAct 营养 loop、今日上下文填充、草稿确认和饮食表落库 |
 | `today_body_status_record` | 当日睡眠和身体状态记录 | `body_status_writer` | `body_status` | `ready` | 已支持睡眠、疲劳、酸痛、体重、情绪等解析和身体状态表落库 |
 | `user_workout_plan_update` | 用户健身计划更新 | `workout_plan_updater` | `plan` | `ready` | 已接入长期训练计划提取、草稿确认和增量入库模块 |
@@ -200,6 +201,24 @@ LLM 被要求只输出 JSON，例如：
 - `agent/src/fitmind_agent/services/chat_context.py`
 - `agent/src/fitmind_agent/services/chat_service.py`
 - `agent/src/fitmind_agent/services/session_summary_service.py`
+
+### 5.8 训练日志查询与回顾
+
+当最终意图是 `workout_history_query` 时，系统会进入训练历史查询工作流：
+
+1. 使用 LLM 将自然语言解析为日期、训练部位和动作关键字筛选条件
+2. 服务端校验日期，默认近 7 天，单次最多查询 90 天
+3. 从训练主表和动作明细表读取真实记录，再用内置动作部位映射兼容历史文本数据
+4. 代码生成确定性统计和结构化 Markdown，不使用 LLM 编造训练结论
+5. SSE 输出查询条件、查库、部位筛选和完成节点；不经过草稿确认
+
+独立页面可调用：`GET /api/v1/workouts/history`，参数支持 `user_id`、`start_date`、`end_date`、`muscle_group`、`exercise_keyword`、`page` 和 `page_size`。
+
+相关文件：
+
+- `agent/src/fitmind_agent/services/workout_history_service.py`
+- `agent/src/fitmind_agent/api/routes/workouts.py`
+- `agent/src/fitmind_agent/prompts/workout_history_query/`
 
 ---
 

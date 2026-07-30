@@ -7,6 +7,7 @@ import useSmartAutoScroll from '../hooks/useSmartAutoScroll'
 
 const quickPrompts = [
   '记录今天的腿部训练和有氧',
+  '查看最近 7 天训练记录',
   '补充午餐、晚餐与蛋白质摄入',
   '回顾最近 7 天的体重变化',
   '总结这周恢复情况和睡眠质量',
@@ -546,6 +547,16 @@ function isDraftGenerationTrace(event) {
     ].includes(event.node)
   }
 
+  if (event.workflow === 'workout_history_query') {
+    return [
+      'history_query_start',
+      'parse_history_filters',
+      'query_workout_records',
+      'filter_by_muscle_group',
+      'history_complete',
+    ].includes(event.node)
+  }
+
   return false
 }
 
@@ -992,7 +1003,7 @@ function MessageRow({ message, sending, onDraftAction, now }) {
   )
 }
 
-function ChatWorkspace({ session, onLogout }) {
+function ChatWorkspace({ session, onLogout, onOpenHistory }) {
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState([])
   const [activeSessionId, setActiveSessionId] = useState(null)
@@ -2193,6 +2204,18 @@ function ChatWorkspace({ session, onLogout }) {
             className="mx-3 mt-1 rounded-full bg-[linear-gradient(135deg,#648bff,#79d0b5)] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_26px_rgba(100,139,255,0.24)] transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {creatingSession ? '创建中...' : '新建对话'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarOpen(false)
+              onOpenHistory()
+            }}
+            className="mx-3 mt-3 flex items-center justify-between rounded-[1.25rem] bg-[rgba(79,140,255,0.07)] px-4 py-3 text-left text-sm font-semibold text-[var(--accent)] transition-all duration-300 hover:bg-[rgba(79,140,255,0.12)]"
+          >
+            <span>训练历史</span>
+            <span className="text-lg leading-none">↗</span>
           </button>
 
           <div className="app-scrollbar mt-5 flex-1 space-y-5 overflow-y-auto px-3 pb-3">

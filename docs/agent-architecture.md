@@ -28,6 +28,7 @@ FitMind V1 的核心职责是：
 - 普通 LLM 对话（含 session summary 上下文压缩）
 - 保存完整会话、每轮消息和意图识别日志
 - Token 使用统计（旁路写入）
+- 查询训练历史（日期、部位、动作筛选与确定性统计）
 
 ### 2.2 V1 不承担的职责
 
@@ -35,8 +36,7 @@ FitMind V1 的核心职责是：
 - 自动生成长期训练周期
 - 依赖视觉识别动作质量
 - 对营养做严谨临床级计算
-- 最近训练总结（已预留路由，业务模块待实现）
-- 当日训练推荐（已预留路由，业务模块待实现）
+- 基于长期数据的训练负荷趋势图与周报
 
 ---
 
@@ -96,6 +96,7 @@ User
     → [pending workflow context check]
     → RecentHealthSummaryService.stream_maybe_handle()
     → TodayWorkoutRecommendationService.stream_maybe_handle()
+    → WorkoutHistoryService.stream_maybe_handle()
     → NutritionRecordService.maybe_handle()
     → BodyStatusRecordService.maybe_handle()
     → WorkoutRecordService.maybe_handle()
@@ -140,7 +141,7 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 
 双层意图识别：
 
-1. **关键词规则预判**：对 6 个业务意图维护关键词表，计算命中率得出置信度
+1. **关键词规则预判**：对业务意图维护关键词表，计算命中率得出置信度
 2. **LLM 分类**：调用 LLM 输出 `{"intent": "...", "confidence": ..., "reason": "..."}`
 
 置信度决策规则：
@@ -154,6 +155,7 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 - `today_workout_record`
 - `recent_health_summary`
 - `today_workout_recommendation`
+- `workout_history_query`
 - `today_nutrition_record`
 - `today_body_status_record`
 - `user_workout_plan_update`
@@ -170,6 +172,7 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 | --- | --- | --- |
 | `recent_health_summary` | `workout_summary_agent` | ready |
 | `today_workout_recommendation` | `workout_recommendation_agent` | ready |
+| `workout_history_query` | `workout_history_query_service` | ready |
 | `today_workout_record` | `workout_record_writer` | ready |
 | `today_nutrition_record` | `nutrition_record_react_writer` | ready |
 | `today_body_status_record` | `body_status_writer` | ready |
@@ -218,6 +221,17 @@ def stream_maybe_handle(self, *, user_id, user_query, intent_result) -> Iterator
 - 并发查询最新长期训练计划和最近 7 天训练记录（`ThreadPoolExecutor(2)`）
 - LLM 结合训练历史恢复状态和计划生成当日训练建议
 - 通过 SSE progress 事件实时反馈查询进度
+
+#### WorkoutHistoryService
+
+位置：`agent/src/fitmind_agent/services/workout_history_service.py`
+
+特点：
+- 流式 `stream_maybe_handle()` 模式，不经过草稿确认
+- LLM 只负责把查询语句解析为日期、部位和动作条件；查询、筛选、统计与回复都由代码完成
+- 默认查询最近 7 天，服务端限制单次查询最多 90 天
+- 通过动作别名和训练名称映射胸、背、腿、肩、手臂、核心、全身、有氧与其他类别，兼容已有记录
+- 提供 `GET /api/v1/workouts/history` 给独立训练历史页使用
 
 #### NutritionRecordService
 

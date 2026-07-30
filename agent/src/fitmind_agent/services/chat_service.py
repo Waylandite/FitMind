@@ -35,6 +35,7 @@ from fitmind_agent.services.today_workout_recommendation_service import (
     TodayWorkoutRecommendationService,
 )
 from fitmind_agent.services.workout_plan_service import WorkoutPlanService
+from fitmind_agent.services.workout_history_service import WorkoutHistoryService
 from fitmind_agent.services.workout_record_service import WorkoutRecordService
 
 
@@ -141,6 +142,38 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=recommendation_result.reply,
+                )
+            history_result = None
+            for history_event in WorkoutHistoryService(
+                llm_service=self.llm_service,
+            ).stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+                db=self.db,
+            ):
+                if history_event.get("kind") == "result":
+                    history_result = history_event.get("result")
+
+            if history_result is not None and history_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=history_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                return ChatResponse(
+                    user_id=payload.user_id,
+                    thread_id=payload.thread_id,
+                    session_id=session_id,
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source,
+                    module_name=module_route.module_name,
+                    module_status=module_route.status,
+                    model="fitmind-workflow",
+                    reply=history_result.reply,
                 )
             nutrition_result = NutritionRecordService(
                 db=self.db,
@@ -479,6 +512,56 @@ class ChatService:
                         "workflow": {
                             "name": "today_workout_recommendation",
                             "action": recommendation_result.action,
+                        },
+                    }
+                )
+                return
+
+            history_service = WorkoutHistoryService(llm_service=self.llm_service)
+            history_result = None
+            for history_event in history_service.stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+                db=self.db,
+            ):
+                if history_event.get("kind") == "progress":
+                    yield self._format_sse(
+                        {
+                            "type": "agent_state",
+                            **(history_event.get("event") or {}),
+                        }
+                    )
+                    continue
+                if history_event.get("kind") == "result":
+                    history_result = history_event.get("result")
+
+            if history_result is not None and history_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=history_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield from self._format_text_delta_events(history_result.reply, model="fitmind-workflow")
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": history_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "workout_history_query",
+                            "action": history_result.action,
                         },
                     }
                 )

@@ -27,6 +27,13 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         description="已接入当日训练计划推荐模块。",
         status="ready",
     ),
+    "workout_history_query": IntentModuleRoute(
+        intent="workout_history_query",
+        module_name="workout_history_query_service",
+        db_intent_type="query",
+        description="已接入训练日志查询、动作筛选和确定性回顾模块。",
+        status="ready",
+    ),
     "today_nutrition_record": IntentModuleRoute(
         intent="today_nutrition_record",
         module_name="nutrition_record_react_writer",

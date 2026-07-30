@@ -60,7 +60,7 @@ FitMind 当前由两部分组成：
   → ChatService（主编排器、session 管理）
   → IntentClassifier（关键词 + LLM 双模意图分类）
   → IntentRouter（意图 → 模块路由）
-  → ServiceChain（健康总结 → 训练推荐 → 饮食 → 身体状态 → 训练记录 → 计划更新）
+  → ServiceChain（健康总结 → 训练推荐 → 训练历史 → 饮食 → 身体状态 → 训练记录 → 计划更新）
   → 草稿确认 → 结构化落库
 ```
 
@@ -83,6 +83,7 @@ FitMind 当前由两部分组成：
 |------|------|------|
 | 最近健康总结 | `recent_health_summary` | 并发查询最近 7 天训练、饮食、身体状态和长期计划，LLM 汇总生成结构化总结 |
 | 今日训练推荐 | `today_workout_recommendation` | 并发查询最新长期计划和最近 7 天训练记录，LLM 结合恢复状态生成训练建议 |
+| 训练日志查询与回顾 | `workout_history_query` | 按日期、部位和动作筛选真实训练记录，返回确定性统计与动作明细 |
 
 ### 对话与系统
 
@@ -103,7 +104,6 @@ FitMind 当前由两部分组成：
 | 功能 | 说明 |
 |------|------|
 | 澄清追问 | `unknown` 意图已预留路由，当置信度不足时的主动追问逻辑待实现 |
-| 训练日志查询回顾 | 按日期/部位/动作查询历史训练记录 |
 | 周报与趋势分析 | 基于结构化数据的健身趋势可视化和复盘 |
 | 记忆冲突处理 | Agent 提取的长期记忆与用户显式记忆冲突时的协调机制 |
 | 移动端适配 | 当前以桌面端为主 |
@@ -214,6 +214,7 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 - 后端：`http://127.0.0.1:8000`
 - 流式对话：`POST /api/v1/chat/stream`
 - 直连 LLM：`POST /api/v1/llm/chat`
+- 训练历史：`GET /api/v1/workouts/history?user_id=1&start_date=2026-07-24&end_date=2026-07-30`
 
 ---
 

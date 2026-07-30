@@ -1,0 +1,7 @@
+当前日期：{{current_date}}
+默认查询范围：{{default_start_date}} 至 {{default_end_date}}
+
+用户查询：
+{{user_query}}
+
+请只输出训练历史查询条件 JSON。
