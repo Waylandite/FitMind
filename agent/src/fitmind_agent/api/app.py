@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from fitmind_agent.api.routes import chat, memory, meta
+from fitmind_agent.api.routes import chat, memory, meta, profile
 from fitmind_agent.api.routes import llm
 from fitmind_agent.core.config import get_settings
 
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix=settings.api_prefix)
     app.include_router(llm.router, prefix=settings.api_prefix)
     app.include_router(memory.router, prefix=settings.api_prefix)
+    app.include_router(profile.router, prefix=settings.api_prefix)
 
     @app.get("/healthz", tags=["system"])
     def healthcheck() -> dict[str, str]:

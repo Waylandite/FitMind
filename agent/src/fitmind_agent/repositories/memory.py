@@ -25,6 +25,14 @@ class UserDefinedMemoryRepository:
         self.session.refresh(memory)
         return memory
 
+    def create_many(self, records: list[Mapping[str, Any]]) -> list[UserDefinedMemory]:
+        memories = [UserDefinedMemory(**dict(record)) for record in records]
+        self.session.add_all(memories)
+        self.session.commit()
+        for memory in memories:
+            self.session.refresh(memory)
+        return memories
+
     def get_by_id(self, memory_id: int) -> UserDefinedMemory | None:
         return self.session.get(UserDefinedMemory, memory_id)
 

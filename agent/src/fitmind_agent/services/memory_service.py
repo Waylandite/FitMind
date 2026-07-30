@@ -21,6 +21,20 @@ from fitmind_agent.schemas.memory import UserDefinedMemoryCreate
 from fitmind_agent.schemas.memory import UserDefinedMemoryRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryUpdate
 
+DEFAULT_USER_DEFINED_MEMORY_FIELDS = [
+    ("fitness_preference", "goal_type", "训练目标"),
+    ("fitness_preference", "preferred_exercises", "偏好训练部位或动作"),
+    ("fitness_preference", "disliked_exercises", "不喜欢或想减少的训练"),
+    ("content_preference", "focus_topics", "希望重点关注的话题"),
+    ("content_preference", "avoid_topics", "希望减少或避免的话题"),
+    ("conversation_preference", "response_style", "回答风格"),
+    ("diet_preference", "diet_structure", "饮食结构"),
+    ("diet_preference", "avoid_foods", "忌口或少吃的食物"),
+    ("diet_preference", "intolerances", "不耐受或过敏提示"),
+    ("health_constraint_preference", "injury_notes", "伤病说明"),
+    ("health_constraint_preference", "movement_restrictions", "动作限制"),
+]
+
 
 class MemoryService:
     def __init__(self, db: Session) -> None:
@@ -36,6 +50,21 @@ class MemoryService:
 
     def list_user_defined_memories(self, user_id: int, status: str | None = None) -> list[UserDefinedMemoryRead]:
         records = self.user_defined_repo.list_by_user(user_id=user_id, status=status)
+        if not records and status in (None, "active"):
+            records = self.user_defined_repo.create_many(
+                [
+                    {
+                        "user_id": user_id,
+                        "memory_category": category,
+                        "memory_key": key,
+                        "memory_value": None,
+                        "raw_text": label,
+                        "priority": 100,
+                        "status": "active",
+                    }
+                    for category, key, label in DEFAULT_USER_DEFINED_MEMORY_FIELDS
+                ]
+            )
         return [UserDefinedMemoryRead.model_validate(record) for record in records]
 
     def update_user_defined_memory(

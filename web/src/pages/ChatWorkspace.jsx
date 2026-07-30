@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarDays, CircleUserRound, EyeOff, Mars, Ruler, Venus, Weight } from 'lucide-react'
+import { DayPicker } from 'react-day-picker'
 import AgentThoughtProcess from '../components/AgentThoughtProcess'
 import MarkdownMessage from '../components/MarkdownMessage'
 import useSmartAutoScroll from '../hooks/useSmartAutoScroll'
@@ -10,20 +12,231 @@ const quickPrompts = [
   '总结这周恢复情况和睡眠质量',
 ]
 
-const profileHighlights = [
-  { label: '身高', value: '176 cm' },
-  { label: '体重', value: '71.8 kg' },
-  { label: '目标', value: '减脂并保持力量' },
-]
-
-const memoryPreferences = [
-  { label: '训练记忆', value: '优先记住动作、组数、RPE 和完成感受。' },
-  { label: '身体状态', value: '持续追踪体重、睡眠时长、疲劳和恢复节奏。' },
-  { label: '饮食习惯', value: '偏高蛋白、工作日快记录，允许后补热量估算。' },
-]
-
 const apiBaseUrl =
   import.meta.env.VITE_AGENT_BASE_URL?.replace(/\/$/, '') ?? 'http://127.0.0.1:8000/api/v1'
+
+const weekdayOptions = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const genderOptions = [
+  { value: '男', label: '男', Icon: Mars },
+  { value: '女', label: '女', Icon: Venus },
+  { value: '其他', label: '其他', Icon: CircleUserRound },
+  { value: '不透露', label: '不透露', Icon: EyeOff },
+]
+const goalTypeOptions = ['减脂', '增肌', '维持', '塑形', '提升体能']
+const trainingLevelOptions = ['新手', '初级', '中级', '高级']
+const responseStyleOptions = ['简洁', '详细', '鼓励型', '直接型']
+const dietStructureOptions = ['高蛋白', '低碳水', '控糖', '均衡饮食', '素食']
+
+const memoryCategoryDefinitions = [
+  {
+    id: 'fitness_preference',
+    title: '健身偏好',
+    description: '记录你的训练目标、喜欢与不喜欢练的内容。',
+    fields: [
+      { key: 'goal_type', label: '训练目标', type: 'select', options: goalTypeOptions },
+      { key: 'preferred_exercises', label: '偏好训练部位或动作', type: 'textarea', rows: 3 },
+      { key: 'disliked_exercises', label: '不喜欢或想减少的训练', type: 'textarea', rows: 3 },
+    ],
+  },
+  {
+    id: 'content_preference',
+    title: '内容偏好',
+    description: '让助手知道你希望重点聊什么，或者避免哪些内容。',
+    fields: [
+      { key: 'focus_topics', label: '希望重点关注的话题', type: 'textarea', rows: 3 },
+      { key: 'avoid_topics', label: '希望减少或避免的话题', type: 'textarea', rows: 3 },
+    ],
+  },
+  {
+    id: 'conversation_preference',
+    title: '对话风格',
+    description: '设定 FitMind 回答你的语气和信息密度。',
+    fields: [{ key: 'response_style', label: '回答风格', type: 'radio', options: responseStyleOptions }],
+  },
+  {
+    id: 'diet_preference',
+    title: '饮食偏好',
+    description: '记录你的饮食结构、忌口和不耐受情况。',
+    fields: [
+      { key: 'diet_structure', label: '饮食结构', type: 'select', options: dietStructureOptions },
+      { key: 'avoid_foods', label: '忌口或少吃的食物', type: 'textarea', rows: 3 },
+      { key: 'intolerances', label: '不耐受或过敏提示', type: 'textarea', rows: 3 },
+    ],
+  },
+  {
+    id: 'health_constraint_preference',
+    title: '健康限制',
+    description: '让助手在训练建议里避开风险动作和敏感点。',
+    fields: [
+      { key: 'injury_notes', label: '伤病说明', type: 'textarea', rows: 3 },
+      { key: 'movement_restrictions', label: '动作限制', type: 'textarea', rows: 3 },
+    ],
+  },
+]
+
+function createEmptyProfileForm() {
+  return {
+    gender: '',
+    birth_date: '',
+    height_cm: '',
+    weight_kg: '',
+    target_weight_kg: '',
+    goal_type: '',
+    training_level: '',
+    injury_notes: '',
+    medical_notes: '',
+    diet_preference: '',
+    preferred_training_days: [],
+    remark: '',
+  }
+}
+
+function createEmptyMemoryForm() {
+  return memoryCategoryDefinitions.reduce((accumulator, category) => {
+    category.fields.forEach((field) => {
+      accumulator[`${category.id}::${field.key}`] = ''
+    })
+    return accumulator
+  }, {})
+}
+
+function mapProfileToForm(profile) {
+  if (!profile) {
+    return createEmptyProfileForm()
+  }
+
+  return {
+    gender: profile.gender ?? '',
+    birth_date: profile.birth_date ?? '',
+    height_cm: profile.height_cm == null ? '' : String(profile.height_cm),
+    weight_kg: profile.weight_kg == null ? '' : String(profile.weight_kg),
+    target_weight_kg: profile.target_weight_kg == null ? '' : String(profile.target_weight_kg),
+    goal_type: profile.goal_type ?? '',
+    training_level: profile.training_level ?? '',
+    injury_notes: profile.injury_notes ?? '',
+    medical_notes: profile.medical_notes ?? '',
+    diet_preference: profile.diet_preference ?? '',
+    preferred_training_days: profile.preferred_training_days
+      ? profile.preferred_training_days
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [],
+    remark: profile.remark ?? '',
+  }
+}
+
+function toNullableText(value) {
+  const text = String(value ?? '').trim()
+  return text ? text : null
+}
+
+function toNullableNumber(value) {
+  if (value === '' || value == null) {
+    return null
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function serializeProfileForm(form) {
+  return {
+    gender: toNullableText(form.gender),
+    birth_date: toNullableText(form.birth_date),
+    height_cm: toNullableNumber(form.height_cm),
+    weight_kg: toNullableNumber(form.weight_kg),
+    target_weight_kg: toNullableNumber(form.target_weight_kg),
+    goal_type: toNullableText(form.goal_type),
+    training_level: toNullableText(form.training_level),
+    injury_notes: toNullableText(form.injury_notes),
+    medical_notes: toNullableText(form.medical_notes),
+    diet_preference: toNullableText(form.diet_preference),
+    preferred_training_days: form.preferred_training_days.length ? form.preferred_training_days.join(',') : null,
+    remark: toNullableText(form.remark),
+  }
+}
+
+function getProfileSummaryItems(form) {
+  const items = [
+    {
+      label: '身高',
+      value: form.height_cm ? form.height_cm : '未填写',
+      unit: form.height_cm ? 'cm' : '',
+      Icon: Ruler,
+      tone: 'blue',
+    },
+    {
+      label: '体重',
+      value: form.weight_kg ? form.weight_kg : '未填写',
+      unit: form.weight_kg ? 'kg' : '',
+      Icon: Weight,
+      tone: 'mint',
+    },
+  ]
+
+  return items
+}
+
+function parseDateInput(value) {
+  if (!value) {
+    return undefined
+  }
+
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function formatDateInput(date) {
+  if (!date) {
+    return ''
+  }
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatDisplayDate(value) {
+  const date = parseDateInput(value)
+  if (!date) {
+    return '选择出生日期'
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(date)
+}
+
+function mapMemoriesToForm(records) {
+  const nextForm = createEmptyMemoryForm()
+  records.forEach((record) => {
+    const fieldId = `${record.memory_category}::${record.memory_key}`
+    if (Object.hasOwn(nextForm, fieldId)) {
+      nextForm[fieldId] = record.memory_value ?? ''
+    }
+  })
+  return nextForm
+}
+
+function buildMemoryRecordMap(records) {
+  return records.reduce((accumulator, record) => {
+    accumulator[`${record.memory_category}::${record.memory_key}`] = record
+    return accumulator
+  }, {})
+}
+
+function normalizeFormValue(value) {
+  return String(value ?? '').trim()
+}
+
+function buildMemoryRawText(fieldLabel, value) {
+  const normalized = normalizeFormValue(value)
+  return normalized ? `${fieldLabel}：${normalized}` : null
+}
 
 const emptyAssistantCard = {
   id: 'starter-assistant',
@@ -556,6 +769,152 @@ function HourglassLoader() {
   )
 }
 
+function WeekdaySelector({ value, onToggle }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {weekdayOptions.map((day) => {
+        const selected = value.includes(day)
+
+        return (
+          <button
+            key={day}
+            type="button"
+            onClick={() => onToggle(day)}
+            className={`rounded-full px-3 py-2 text-sm font-medium transition-all duration-300 ${
+              selected
+                ? 'bg-[rgba(79,140,255,0.12)] text-[var(--accent)]'
+                : 'bg-[rgba(56,75,121,0.05)] text-[var(--text-soft)] hover:bg-[rgba(56,75,121,0.09)] hover:text-[var(--text)]'
+            }`}
+          >
+            {day}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ProfileMetricCard({ item }) {
+  const { Icon } = item
+  const toneClass =
+    item.tone === 'mint'
+      ? 'bg-[rgba(119,199,176,0.12)] text-[#3f8f79]'
+      : 'bg-[rgba(79,140,255,0.1)] text-[var(--accent)]'
+
+  return (
+    <div className="rounded-[1.15rem] border border-[rgba(62,82,130,0.06)] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_10px_28px_rgba(96,110,150,0.06)]">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+            {item.label}
+          </p>
+          <div className="mt-2 flex items-baseline gap-1.5">
+            <p className="text-2xl font-bold leading-none text-[var(--text)]">{item.value}</p>
+            {item.unit ? <p className="text-sm font-semibold text-[var(--text-faint)]">{item.unit}</p> : null}
+          </div>
+        </div>
+        <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
+          <Icon size={20} strokeWidth={2.2} />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function GenderSelector({ value, onChange }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {genderOptions.map(({ value: optionValue, label, Icon }) => {
+        const selected = value === optionValue
+
+        return (
+          <button
+            key={optionValue}
+            type="button"
+            onClick={() => onChange(optionValue)}
+            className={`flex min-h-12 items-center justify-center gap-2 rounded-[1rem] border px-3 py-3 text-sm font-semibold transition-all duration-300 ${
+              selected
+                ? 'border-[rgba(79,140,255,0.32)] bg-[rgba(79,140,255,0.1)] text-[var(--accent)] shadow-[0_10px_22px_rgba(79,140,255,0.12)]'
+                : 'border-[rgba(62,82,130,0.08)] bg-white text-[var(--text-soft)] hover:border-[rgba(79,140,255,0.18)] hover:bg-[rgba(79,140,255,0.05)] hover:text-[var(--text)]'
+            }`}
+          >
+            <Icon size={17} strokeWidth={2.2} />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function BirthDatePicker({ value, open, onOpenChange, onChange }) {
+  const selected = parseDateInput(value)
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className="flex w-full items-center justify-between gap-3 rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-left text-sm text-[var(--text)] outline-none transition-all duration-300 hover:border-[rgba(79,140,255,0.24)] hover:bg-[rgba(79,140,255,0.03)]"
+      >
+        <span className={selected ? 'font-semibold text-[var(--text)]' : 'text-[var(--text-faint)]'}>
+          {formatDisplayDate(value)}
+        </span>
+        <CalendarDays size={18} className="shrink-0 text-[var(--text-faint)]" strokeWidth={2.2} />
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+0.6rem)] z-50 w-[min(21rem,calc(100vw-3rem))] rounded-[1.25rem] border border-[rgba(62,82,130,0.08)] bg-white p-3 shadow-[0_24px_56px_rgba(82,98,141,0.18)]">
+          <DayPicker
+            mode="single"
+            selected={selected}
+            captionLayout="dropdown"
+            startMonth={new Date(1940, 0)}
+            endMonth={new Date()}
+            disabled={{ after: new Date() }}
+            onSelect={(date) => {
+              onChange(formatDateInput(date))
+              onOpenChange(false)
+            }}
+            classNames={{
+              root: 'text-sm text-[var(--text)]',
+              months: 'space-y-3',
+              month_caption: 'flex items-center justify-center pb-3',
+              caption_label: 'text-sm font-semibold text-[var(--text)]',
+              dropdowns: 'flex items-center justify-center gap-2',
+              dropdown: 'rounded-full border border-[rgba(62,82,130,0.08)] bg-white px-2 py-1 text-sm outline-none',
+              nav: 'flex items-center justify-between',
+              button_previous: 'absolute left-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-soft)] hover:bg-[rgba(56,75,121,0.06)]',
+              button_next: 'absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-soft)] hover:bg-[rgba(56,75,121,0.06)]',
+              weekdays: 'grid grid-cols-7 gap-1 pb-1',
+              weekday: 'h-8 text-center text-xs font-semibold text-[var(--text-faint)]',
+              week: 'grid grid-cols-7 gap-1',
+              day: 'h-9 w-9 p-0 text-center',
+              day_button: 'h-9 w-9 rounded-full text-sm transition-colors hover:bg-[rgba(79,140,255,0.08)]',
+              selected: 'text-white',
+              today: 'font-bold text-[var(--accent)]',
+              disabled: 'pointer-events-none opacity-30',
+              outside: 'text-[var(--text-faint)] opacity-45',
+            }}
+            modifiersClassNames={{
+              selected: '[&>button]:bg-[var(--accent)] [&>button]:text-white [&>button]:hover:bg-[var(--accent)]',
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FieldLabel({ label, hint }) {
+  return (
+    <div className="mb-2">
+      <p className="text-sm font-semibold text-[var(--text)]">{label}</p>
+      {hint ? <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">{hint}</p> : null}
+    </div>
+  )
+}
+
 function MessageRow({ message, sending, onDraftAction, now }) {
   const meta = roleMeta(message.role)
   const isUser = message.role === 'user'
@@ -646,7 +1005,24 @@ function ChatWorkspace({ session, onLogout }) {
   const [errorMessage, setErrorMessage] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false)
+  const [memorySettingsOpen, setMemorySettingsOpen] = useState(false)
+  const [profileForm, setProfileForm] = useState(createEmptyProfileForm)
+  const [profileInitialForm, setProfileInitialForm] = useState(createEmptyProfileForm)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileLoaded, setProfileLoaded] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [profileSuccess, setProfileSuccess] = useState('')
+  const [birthDatePickerOpen, setBirthDatePickerOpen] = useState(false)
+  const [memoryForm, setMemoryForm] = useState(createEmptyMemoryForm)
+  const [memoryInitialForm, setMemoryInitialForm] = useState(createEmptyMemoryForm)
+  const [memoryRecords, setMemoryRecords] = useState({})
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryLoaded, setMemoryLoaded] = useState(false)
+  const [memorySaving, setMemorySaving] = useState(false)
+  const [memoryError, setMemoryError] = useState('')
+  const [memorySuccess, setMemorySuccess] = useState('')
   const [thinkingNow, setThinkingNow] = useState(0)
   const {
     viewportRef,
@@ -666,6 +1042,30 @@ function ChatWorkspace({ session, onLogout }) {
   const firstTokenAtRef = useRef(null)
   const pendingFinishRef = useRef(false)
   const userId = session.userId ?? 1
+  const profileDirty = useMemo(
+    () => JSON.stringify(profileForm) !== JSON.stringify(profileInitialForm),
+    [profileForm, profileInitialForm],
+  )
+  const memoryDirty = useMemo(
+    () => JSON.stringify(memoryForm) !== JSON.stringify(memoryInitialForm),
+    [memoryForm, memoryInitialForm],
+  )
+  const activeMemoryRecords = useMemo(
+    () =>
+      memoryCategoryDefinitions
+        .map((category) => ({
+          ...category,
+          records: category.fields
+            .map((field) => {
+              const fieldId = `${category.id}::${field.key}`
+              const value = normalizeFormValue(memoryForm[fieldId])
+              return value ? { fieldId, label: field.label, value } : null
+            })
+            .filter(Boolean),
+        }))
+        .filter((category) => category.records.length > 0),
+    [memoryForm],
+  )
 
   const activeSession = useMemo(
     () => sessions.find((item) => item.id === activeSessionId) ?? null,
@@ -810,6 +1210,395 @@ function ChatWorkspace({ session, onLogout }) {
     const nextHeight = Math.min(composerRef.current.scrollHeight, 184)
     composerRef.current.style.height = `${Math.max(nextHeight, 28)}px`
   }, [draft])
+
+  const resetProfileDraft = () => {
+    setProfileForm(profileInitialForm)
+    setProfileError('')
+    setProfileSuccess('')
+  }
+
+  const resetMemoryDraft = () => {
+    setMemoryForm(memoryInitialForm)
+    setMemoryError('')
+    setMemorySuccess('')
+  }
+
+  const discardProfileChanges = () => {
+    setProfileForm(profileInitialForm)
+    setProfileError('')
+    setProfileSuccess('')
+  }
+
+  const discardMemoryChanges = () => {
+    setMemoryForm(memoryInitialForm)
+    setMemoryError('')
+    setMemorySuccess('')
+  }
+
+  const confirmDiscardProfileChanges = () => {
+    if (!profileDirty) {
+      return true
+    }
+
+    const confirmed = window.confirm('当前有未保存的修改，确定放弃这些更改吗？')
+    if (!confirmed) {
+      return false
+    }
+
+    discardProfileChanges()
+    return true
+  }
+
+  const confirmDiscardMemoryChanges = () => {
+    if (!memoryDirty) {
+      return true
+    }
+
+    const confirmed = window.confirm('当前有未保存的修改，确定放弃这些更改吗？')
+    if (!confirmed) {
+      return false
+    }
+
+    discardMemoryChanges()
+    return true
+  }
+
+  const loadMemoryData = async () => {
+    setMemoryLoading(true)
+    setMemoryError('')
+    setMemorySuccess('')
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/memories/user-defined?user_id=${userId}&status=active`)
+      if (!response.ok) {
+        throw new Error(`自定义记忆加载失败: ${response.status}`)
+      }
+
+      const records = await response.json()
+      const nextForm = mapMemoriesToForm(records)
+      setMemoryRecords(buildMemoryRecordMap(records))
+      setMemoryForm(nextForm)
+      setMemoryInitialForm(nextForm)
+      setMemoryLoaded(true)
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : '自定义记忆加载失败')
+    } finally {
+      setMemoryLoading(false)
+    }
+  }
+
+  const openProfileSettingsPanel = () => {
+    if (memorySettingsOpen && !confirmDiscardMemoryChanges()) {
+      return
+    }
+
+    setMemorySettingsOpen(false)
+    setProfileSettingsOpen(true)
+    setProfileOpen(false)
+  }
+
+  const openMemorySettingsPanel = () => {
+    if (profileSettingsOpen && !confirmDiscardProfileChanges()) {
+      return
+    }
+
+    setProfileSettingsOpen(false)
+    setMemorySettingsOpen(true)
+    setProfileOpen(false)
+  }
+
+  const closeProfileSettingsPanel = () => {
+    if (!confirmDiscardProfileChanges()) {
+      return false
+    }
+
+    setProfileSettingsOpen(false)
+    return true
+  }
+
+  const closeMemorySettingsPanel = () => {
+    if (!confirmDiscardMemoryChanges()) {
+      return false
+    }
+
+    setMemorySettingsOpen(false)
+    return true
+  }
+
+  const handleProfileFieldChange = (name, value) => {
+    setProfileForm((current) => ({ ...current, [name]: value }))
+    setProfileError('')
+    setProfileSuccess('')
+  }
+
+  const handleTrainingDayToggle = (day) => {
+    setProfileForm((current) => ({
+      ...current,
+      preferred_training_days: current.preferred_training_days.includes(day)
+        ? current.preferred_training_days.filter((item) => item !== day)
+        : [...current.preferred_training_days, day],
+    }))
+    setProfileError('')
+    setProfileSuccess('')
+  }
+
+  const handleMemoryFieldChange = (fieldId, value) => {
+    setMemoryForm((current) => ({ ...current, [fieldId]: value }))
+    setMemoryError('')
+    setMemorySuccess('')
+  }
+
+  const validateProfileForm = () => {
+    if (profileForm.birth_date) {
+      const parsedDate = new Date(profileForm.birth_date)
+      if (Number.isNaN(parsedDate.getTime())) {
+        return '出生日期格式不正确'
+      }
+    }
+
+    const numericFields = [
+      ['height_cm', '身高'],
+      ['weight_kg', '体重'],
+      ['target_weight_kg', '目标体重'],
+    ]
+
+    for (const [fieldName, label] of numericFields) {
+      const value = profileForm[fieldName]
+      if (!value) {
+        continue
+      }
+
+      const parsed = Number(value)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return `${label}必须是正数`
+      }
+    }
+
+    return ''
+  }
+
+  const handleSaveProfile = async () => {
+    const validationError = validateProfileForm()
+    if (validationError) {
+      setProfileError(validationError)
+      setProfileSuccess('')
+      return
+    }
+
+    setProfileSaving(true)
+    setProfileError('')
+    setProfileSuccess('')
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/profiles/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serializeProfileForm(profileForm)),
+      })
+      if (!response.ok) {
+        throw new Error(`个人信息保存失败: ${response.status}`)
+      }
+
+      const record = await response.json()
+      const nextForm = mapProfileToForm(record)
+      setProfileForm(nextForm)
+      setProfileInitialForm(nextForm)
+      setProfileLoaded(true)
+      setProfileSuccess('个人信息已保存')
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : '个人信息保存失败')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const handleSaveMemory = async () => {
+    setMemorySaving(true)
+    setMemoryError('')
+    setMemorySuccess('')
+
+    try {
+      const requests = []
+
+      memoryCategoryDefinitions.forEach((category) => {
+        category.fields.forEach((field) => {
+          const fieldId = `${category.id}::${field.key}`
+          const nextValue = normalizeFormValue(memoryForm[fieldId])
+          const previousValue = normalizeFormValue(memoryInitialForm[fieldId])
+          const existingRecord = memoryRecords[fieldId]
+
+          if (!nextValue && !existingRecord) {
+            return
+          }
+
+          if (nextValue === previousValue && ((nextValue && existingRecord) || (!nextValue && !existingRecord))) {
+            return
+          }
+
+          if (nextValue && existingRecord) {
+            requests.push(
+              fetch(`${apiBaseUrl}/memories/user-defined/${existingRecord.id}`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  memory_value: nextValue,
+                  raw_text: buildMemoryRawText(field.label, nextValue),
+                  status: 'active',
+                }),
+              }),
+            )
+            return
+          }
+
+          if (nextValue && !existingRecord) {
+            requests.push(
+              fetch(`${apiBaseUrl}/memories/user-defined`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  user_id: userId,
+                  memory_key: field.key,
+                  memory_category: category.id,
+                  memory_value: nextValue,
+                  raw_text: buildMemoryRawText(field.label, nextValue),
+                  priority: 100,
+                  status: 'active',
+                }),
+              }),
+            )
+            return
+          }
+
+          if (!nextValue && existingRecord) {
+            requests.push(
+              fetch(`${apiBaseUrl}/memories/user-defined/${existingRecord.id}`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  memory_value: null,
+                  raw_text: null,
+                  status: 'archived',
+                }),
+              }),
+            )
+            return
+          }
+        })
+      })
+
+      const responses = await Promise.all(requests)
+      const failed = responses.find((response) => !response.ok)
+      if (failed) {
+        throw new Error(`自定义记忆保存失败: ${failed.status}`)
+      }
+
+      await loadMemoryData()
+      setMemorySuccess('自定义记忆已保存')
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : '自定义记忆保存失败')
+    } finally {
+      setMemorySaving(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!profileSettingsOpen || profileLoaded) {
+      return
+    }
+
+    let cancelled = false
+
+    const run = async () => {
+      setProfileLoading(true)
+      setProfileError('')
+      setProfileSuccess('')
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/profiles/${userId}`)
+        if (!response.ok) {
+          throw new Error(`个人信息加载失败: ${response.status}`)
+        }
+
+        const record = await response.json()
+        if (cancelled) {
+          return
+        }
+
+        const nextForm = mapProfileToForm(record)
+        setProfileForm(nextForm)
+        setProfileInitialForm(nextForm)
+        setProfileLoaded(true)
+      } catch (error) {
+        if (!cancelled) {
+          setProfileError(error instanceof Error ? error.message : '个人信息加载失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setProfileLoading(false)
+        }
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [profileSettingsOpen, profileLoaded, userId])
+
+  useEffect(() => {
+    if (!memorySettingsOpen || memoryLoaded || memoryLoading) {
+      return
+    }
+
+    let cancelled = false
+
+    const run = async () => {
+      setMemoryLoading(true)
+      setMemoryError('')
+      setMemorySuccess('')
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/memories/user-defined?user_id=${userId}&status=active`)
+        if (!response.ok) {
+          throw new Error(`自定义记忆加载失败: ${response.status}`)
+        }
+
+        const records = await response.json()
+        if (cancelled) {
+          return
+        }
+
+        const nextForm = mapMemoriesToForm(records)
+        setMemoryRecords(buildMemoryRecordMap(records))
+        setMemoryForm(nextForm)
+        setMemoryInitialForm(nextForm)
+        setMemoryLoaded(true)
+      } catch (error) {
+        if (!cancelled) {
+          setMemoryError(error instanceof Error ? error.message : '自定义记忆加载失败')
+        }
+      } finally {
+        if (!cancelled) {
+          setMemoryLoading(false)
+        }
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [memorySettingsOpen, memoryLoaded, memoryLoading, userId])
 
   useEffect(() => {
     let cancelled = false
@@ -1282,8 +2071,15 @@ function ChatWorkspace({ session, onLogout }) {
 
   const closeOverlays = () => {
     setSidebarOpen(false)
-    setSettingsOpen(false)
     setProfileOpen(false)
+    if (profileSettingsOpen) {
+      closeProfileSettingsPanel()
+      return
+    }
+    if (memorySettingsOpen) {
+      closeMemorySettingsPanel()
+      return
+    }
   }
 
   return (
@@ -1329,12 +2125,20 @@ function ChatWorkspace({ session, onLogout }) {
               <button
                 type="button"
                 onClick={() => {
-                  setSettingsOpen(true)
-                  setProfileOpen(false)
+                  openProfileSettingsPanel()
                 }}
                 className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--text)] transition-all duration-300 hover:bg-[rgba(52,74,140,0.05)]"
               >
-                用户记忆设置
+                个人信息
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openMemorySettingsPanel()
+                }}
+                className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--text)] transition-all duration-300 hover:bg-[rgba(52,74,140,0.05)]"
+              >
+                自定义记忆
               </button>
               <button
                 type="button"
@@ -1350,7 +2154,7 @@ function ChatWorkspace({ session, onLogout }) {
 
       <div
         className={`fixed inset-0 z-30 bg-[rgba(28,34,51,0.14)] backdrop-blur-[2px] transition-all duration-300 ${
-          sidebarOpen || settingsOpen || profileOpen
+          sidebarOpen || profileSettingsOpen || memorySettingsOpen || profileOpen
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'
         }`}
@@ -1404,51 +2208,311 @@ function ChatWorkspace({ session, onLogout }) {
       </aside>
 
       <aside
-        className={`fixed inset-y-0 right-0 z-40 w-full max-w-sm transform bg-[rgba(255,255,255,0.88)] px-4 py-4 shadow-[-14px_0_50px_rgba(82,98,141,0.08)] backdrop-blur-2xl transition-all duration-300 ease-in-out ${
-          settingsOpen ? 'translate-x-0' : 'translate-x-[110%]'
+        className={`fixed inset-y-0 right-0 z-40 w-[min(100vw,44rem)] transform bg-[rgba(255,255,255,0.9)] px-3 py-3 shadow-[-14px_0_50px_rgba(82,98,141,0.08)] backdrop-blur-2xl transition-all duration-300 ease-in-out sm:px-4 sm:py-4 ${
+          profileSettingsOpen ? 'translate-x-0' : 'translate-x-[110%]'
         }`}
       >
-        <div className="flex h-full flex-col rounded-[1.9rem] bg-[rgba(255,255,255,0.58)] px-5 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
-                Memory
-              </p>
-              <h3 className="mt-2 font-display text-[2rem] leading-none tracking-[-0.045em] text-[var(--text)]">
-                用户记忆
-              </h3>
-              <p className="mt-3 text-sm leading-6 text-[var(--text-soft)]">
-                让助手更准确地理解你的身体数据和长期目标。
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(false)}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
-              aria-label="关闭设置"
-            >
-              ×
-            </button>
-          </div>
-
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            {profileHighlights.map((item) => (
-              <div key={item.label} className="rounded-[1.2rem] bg-[rgba(85,104,170,0.04)] px-4 py-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
-                  {item.label}
+        <div className="flex h-full min-h-0 flex-col rounded-[1.4rem] bg-[rgba(255,255,255,0.66)] px-4 py-4 sm:px-5 sm:py-5">
+          <div className="shrink-0">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
+                  Profile
                 </p>
-                <p className="mt-2 text-sm font-semibold text-[var(--text)]">{item.value}</p>
+                <h3 className="mt-2 font-display text-[1.7rem] leading-none text-[var(--text)] sm:text-[2rem]">
+                  个人信息
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-[var(--text-soft)]">
+                  维护你的基础资料、训练目标和饮食背景。
+                </p>
               </div>
-            ))}
+              <button
+                type="button"
+                onClick={closeProfileSettingsPanel}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]"
+                aria-label="关闭个人信息"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {getProfileSummaryItems(profileForm).map((item) => (
+                <ProfileMetricCard key={item.label} item={item} />
+              ))}
+            </div>
           </div>
 
-          <div className="app-scrollbar mt-6 flex-1 space-y-3 overflow-y-auto pr-1">
-            {memoryPreferences.map((item) => (
-              <article key={item.label} className="rounded-[1.35rem] bg-[rgba(255,255,255,0.74)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
-                <p className="text-sm font-semibold text-[var(--text)]">{item.label}</p>
-                <p className="mt-2 text-sm leading-7 text-[var(--text-soft)]">{item.value}</p>
-              </article>
-            ))}
+          <div className="app-scrollbar mt-5 min-h-0 flex-1 overflow-y-auto pb-4 pr-1">
+            <div className="space-y-5">
+              {profileError ? (
+                <div className="rounded-[1rem] bg-[rgba(215,99,99,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
+                  {profileError}
+                </div>
+              ) : null}
+              {profileSuccess ? (
+                <div className="rounded-[1rem] bg-[rgba(119,199,176,0.12)] px-4 py-3 text-sm text-[#3f8f79]">
+                  {profileSuccess}
+                </div>
+              ) : null}
+              {profileLoading ? (
+                <div className="rounded-[1rem] bg-[rgba(79,140,255,0.08)] px-4 py-3 text-sm text-[var(--accent)]">
+                  正在加载个人信息...
+                </div>
+              ) : null}
+                  <section className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                    <FieldLabel label="基础资料" hint="这些信息会帮助助手更准确理解你的身体背景。" />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <FieldLabel label="性别" />
+                        <GenderSelector
+                          value={profileForm.gender}
+                          onChange={(value) => handleProfileFieldChange('gender', value)}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel label="出生日期" />
+                        <BirthDatePicker
+                          value={profileForm.birth_date}
+                          open={birthDatePickerOpen}
+                          onOpenChange={setBirthDatePickerOpen}
+                          onChange={(value) => handleProfileFieldChange('birth_date', value)}
+                        />
+                      </div>
+                      <label>
+                        <FieldLabel label="身高 (cm)" />
+                        <input type="number" min="0" step="0.1" value={profileForm.height_cm} onChange={(event) => handleProfileFieldChange('height_cm', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none" />
+                      </label>
+                      <label>
+                        <FieldLabel label="体重 (kg)" />
+                        <input type="number" min="0" step="0.1" value={profileForm.weight_kg} onChange={(event) => handleProfileFieldChange('weight_kg', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none" />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                    <FieldLabel label="目标与训练" hint="这里会影响训练建议和长期对话上下文。" />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label>
+                        <FieldLabel label="目标体重 (kg)" />
+                        <input type="number" min="0" step="0.1" value={profileForm.target_weight_kg} onChange={(event) => handleProfileFieldChange('target_weight_kg', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none" />
+                      </label>
+                      <label>
+                        <FieldLabel label="训练目标" />
+                        <select value={profileForm.goal_type} onChange={(event) => handleProfileFieldChange('goal_type', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none">
+                          <option value="">请选择</option>
+                          {goalTypeOptions.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <FieldLabel label="训练水平" />
+                        <select value={profileForm.training_level} onChange={(event) => handleProfileFieldChange('training_level', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none">
+                          <option value="">请选择</option>
+                          {trainingLevelOptions.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div>
+                        <FieldLabel label="偏好训练日" hint="多选后会按逗号字符串写入当前表结构。" />
+                        <WeekdaySelector value={profileForm.preferred_training_days} onToggle={handleTrainingDayToggle} />
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                    <FieldLabel label="限制与饮食" hint="用来告诉助手你的伤病、医疗和饮食背景。" />
+                    <div className="grid gap-4">
+                      <label>
+                        <FieldLabel label="伤病说明" />
+                        <textarea rows="3" value={profileForm.injury_notes} onChange={(event) => handleProfileFieldChange('injury_notes', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm leading-6 text-[var(--text)] outline-none" />
+                      </label>
+                      <label>
+                        <FieldLabel label="医疗说明" />
+                        <textarea rows="3" value={profileForm.medical_notes} onChange={(event) => handleProfileFieldChange('medical_notes', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm leading-6 text-[var(--text)] outline-none" />
+                      </label>
+                      <label>
+                        <FieldLabel label="饮食偏好" />
+                        <textarea rows="3" value={profileForm.diet_preference} onChange={(event) => handleProfileFieldChange('diet_preference', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm leading-6 text-[var(--text)] outline-none" />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                    <label>
+                      <FieldLabel label="补充备注" hint="可以写你的作息、训练偏好补充或其他想长期保留的信息。" />
+                      <textarea rows="4" value={profileForm.remark} onChange={(event) => handleProfileFieldChange('remark', event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm leading-6 text-[var(--text)] outline-none" />
+                    </label>
+                  </section>
+            </div>
+          </div>
+
+          <div className="shrink-0 border-t border-[rgba(62,82,130,0.08)] pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <button type="button" onClick={resetProfileDraft} disabled={!profileDirty || profileSaving} className="rounded-full bg-[rgba(56,75,121,0.06)] px-4 py-2 text-sm font-semibold text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(56,75,121,0.1)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-50">
+                还原修改
+              </button>
+              <button type="button" onClick={handleSaveProfile} disabled={profileSaving || profileLoading} className="rounded-full bg-[linear-gradient(135deg,#5f89ff,#76d0b5)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(98,134,255,0.2)] transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60">
+                {profileSaving ? '保存中...' : '保存个人信息'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <aside
+        className={`fixed inset-y-0 right-0 z-40 w-[min(100vw,52rem)] transform bg-[rgba(255,255,255,0.9)] px-3 py-3 shadow-[-14px_0_50px_rgba(82,98,141,0.08)] backdrop-blur-2xl transition-all duration-300 ease-in-out sm:px-4 sm:py-4 ${
+          memorySettingsOpen ? 'translate-x-0' : 'translate-x-[110%]'
+        }`}
+      >
+        <div className="flex h-full min-h-0 flex-col rounded-[1.4rem] bg-[rgba(255,255,255,0.66)] px-4 py-4 sm:px-5 sm:py-5">
+          <div className="shrink-0">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">
+                  Memory
+                </p>
+                <h3 className="mt-2 font-display text-[1.7rem] leading-none text-[var(--text)] sm:text-[2rem]">
+                  自定义记忆
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-[var(--text-soft)]">
+                  维护你希望 FitMind 长期记住的显式偏好。
+                </p>
+              </div>
+              <button type="button" onClick={closeMemorySettingsPanel} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-faint)] transition-all duration-300 hover:bg-[rgba(46,56,87,0.06)] hover:text-[var(--text)]" aria-label="关闭自定义记忆">
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {[
+                { label: '已激活', value: `${activeMemoryRecords.reduce((total, category) => total + category.records.length, 0)} 条` },
+                { label: '类别数', value: `${activeMemoryRecords.length || 0} 类` },
+                { label: '风格', value: normalizeFormValue(memoryForm['conversation_preference::response_style']) || '未设置' },
+              ].map((item) => (
+                <div key={item.label} className="rounded-[1rem] bg-[rgba(85,104,170,0.04)] px-4 py-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                    {item.label}
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[var(--text)]">{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="app-scrollbar mt-5 min-h-0 flex-1 overflow-y-auto pb-4 pr-1">
+            <div className="space-y-5">
+              {memoryError ? (
+                <div className="rounded-[1rem] bg-[rgba(215,99,99,0.08)] px-4 py-3 text-sm text-[var(--danger)]">
+                  {memoryError}
+                </div>
+              ) : null}
+              {memorySuccess ? (
+                <div className="rounded-[1rem] bg-[rgba(119,199,176,0.12)] px-4 py-3 text-sm text-[#3f8f79]">
+                  {memorySuccess}
+                </div>
+              ) : null}
+              {memoryLoading ? (
+                <div className="space-y-3">
+                  <div className="skeleton-shimmer h-24 rounded-[1rem]" />
+                  <div className="skeleton-shimmer h-24 rounded-[1rem]" />
+                  <div className="skeleton-shimmer h-24 rounded-[1rem]" />
+                </div>
+              ) : (
+                <>
+                  {activeMemoryRecords.length ? (
+                    <section className="grid gap-3 sm:grid-cols-2">
+                      {activeMemoryRecords.map((category) => (
+                        <article key={category.id} className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                          <p className="text-sm font-semibold text-[var(--text)]">{category.title}</p>
+                          <div className="mt-3 space-y-2">
+                            {category.records.map((record) => (
+                              <div key={record.fieldId}>
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
+                                  {record.label}
+                                </p>
+                                <p className="mt-1 text-sm leading-6 text-[var(--text-soft)]">{record.value}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+                    </section>
+                  ) : (
+                    <article className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                      <p className="text-sm font-semibold text-[var(--text)]">还没有激活的自定义记忆</p>
+                      <p className="mt-2 text-sm leading-7 text-[var(--text-soft)]">
+                        你可以从下面的结构化表单开始填写，保存后 FitMind 会长期记住这些偏好。
+                      </p>
+                    </article>
+                  )}
+
+                  {memoryCategoryDefinitions.map((category) => (
+                    <section key={category.id} className="rounded-[1rem] bg-[rgba(255,255,255,0.78)] px-4 py-4 shadow-[0_8px_24px_rgba(96,110,150,0.06)]">
+                      <FieldLabel label={category.title} hint={category.description} />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {category.fields.map((field) => {
+                          const fieldId = `${category.id}::${field.key}`
+
+                          if (field.type === 'select') {
+                            return (
+                              <label key={fieldId}>
+                                <FieldLabel label={field.label} />
+                                <select value={memoryForm[fieldId]} onChange={(event) => handleMemoryFieldChange(fieldId, event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none">
+                                  <option value="">请选择</option>
+                                  {field.options.map((option) => (
+                                    <option key={option} value={option}>{option}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            )
+                          }
+
+                          if (field.type === 'radio') {
+                            return (
+                              <div key={fieldId} className="sm:col-span-2">
+                                <FieldLabel label={field.label} />
+                                <div className="flex flex-wrap gap-2">
+                                  {field.options.map((option) => {
+                                    const selected = memoryForm[fieldId] === option
+
+                                    return (
+                                      <button key={option} type="button" onClick={() => handleMemoryFieldChange(fieldId, option)} className={`rounded-full px-3 py-2 text-sm font-medium transition-all duration-300 ${selected ? 'bg-[rgba(79,140,255,0.12)] text-[var(--accent)]' : 'bg-[rgba(56,75,121,0.05)] text-[var(--text-soft)] hover:bg-[rgba(56,75,121,0.09)] hover:text-[var(--text)]'}`}>
+                                        {option}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          }
+
+                          return (
+                            <label key={fieldId}>
+                              <FieldLabel label={field.label} />
+                              <textarea rows={field.rows ?? 3} value={memoryForm[fieldId]} onChange={(event) => handleMemoryFieldChange(fieldId, event.target.value)} className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.08)] bg-white px-4 py-3 text-sm leading-6 text-[var(--text)] outline-none" />
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="shrink-0 border-t border-[rgba(62,82,130,0.08)] pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <button type="button" onClick={resetMemoryDraft} disabled={!memoryDirty || memorySaving} className="rounded-full bg-[rgba(56,75,121,0.06)] px-4 py-2 text-sm font-semibold text-[var(--text-soft)] transition-all duration-300 hover:bg-[rgba(56,75,121,0.1)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-50">
+                还原修改
+              </button>
+              <button type="button" onClick={handleSaveMemory} disabled={memorySaving || memoryLoading} className="rounded-full bg-[linear-gradient(135deg,#5f89ff,#76d0b5)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(98,134,255,0.2)] transition-all duration-300 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60">
+                {memorySaving ? '保存中...' : '保存自定义记忆'}
+              </button>
+            </div>
           </div>
         </div>
       </aside>
