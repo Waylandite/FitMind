@@ -29,6 +29,8 @@ FitMind V1 的核心职责是：
 - 保存完整会话、每轮消息和意图识别日志
 - Token 使用统计（旁路写入）
 - 查询训练历史（日期、部位、动作筛选与确定性统计）
+- 查询最近健康状态与生成今日训练建议
+- 自然周周报、上周同期对比和趋势可视化
 
 ### 2.2 V1 不承担的职责
 
@@ -36,7 +38,7 @@ FitMind V1 的核心职责是：
 - 自动生成长期训练周期
 - 依赖视觉识别动作质量
 - 对营养做严谨临床级计算
-- 基于长期数据的训练负荷趋势图与周报
+- 月度及更长周期的训练负荷趋势
 
 ---
 
@@ -95,6 +97,7 @@ User
     → IntentRouter (intent → module route)
     → [pending workflow context check]
     → RecentHealthSummaryService.stream_maybe_handle()
+    → WeeklyTrendReportService.stream_maybe_handle()
     → TodayWorkoutRecommendationService.stream_maybe_handle()
     → WorkoutHistoryService.stream_maybe_handle()
     → NutritionRecordService.maybe_handle()
@@ -156,6 +159,7 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 - `recent_health_summary`
 - `today_workout_recommendation`
 - `workout_history_query`
+- `weekly_trend_report`
 - `today_nutrition_record`
 - `today_body_status_record`
 - `user_workout_plan_update`
@@ -170,14 +174,14 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 
 | 意图 | 模块名 | 状态 |
 | --- | --- | --- |
-| `recent_health_summary` | `workout_summary_agent` | ready |
+| `recent_health_summary` | `health_summary_agent` | ready |
 | `today_workout_recommendation` | `workout_recommendation_agent` | ready |
 | `workout_history_query` | `workout_history_query_service` | ready |
+| `weekly_trend_report` | `weekly_trend_report_service` | ready |
 | `today_workout_record` | `workout_record_writer` | ready |
 | `today_nutrition_record` | `nutrition_record_react_writer` | ready |
 | `today_body_status_record` | `body_status_writer` | ready |
 | `user_workout_plan_update` | `workout_plan_updater` | ready |
-| `general_chat` | `general_chat` | ready |
 | `unknown` | `clarification_agent` | placeholder |
 
 ### 5.4 领域 Service（maybe_handle / stream_maybe_handle 模式）
@@ -232,6 +236,16 @@ def stream_maybe_handle(self, *, user_id, user_query, intent_result) -> Iterator
 - 默认查询最近 7 天，服务端限制单次查询最多 90 天
 - 通过动作别名和训练名称映射胸、背、腿、肩、手臂、核心、全身、有氧与其他类别，兼容已有记录
 - 提供 `GET /api/v1/workouts/history` 给独立训练历史页使用
+
+#### WeeklyAnalyticsService / WeeklyTrendReportService
+
+特点：
+- `WeeklyAnalyticsService` 负责自然周边界、上周同期、训练/饮食/恢复统计和每日序列，所有数值由代码确定性计算
+- 通过 `ThreadPoolExecutor(3)` 并发读取两个对比周期内的训练、饮食和身体状态
+- 当前周按周一至当天统计，历史周按完整周一至周日统计
+- `WeeklyTrendReportService` 只把统计结果交给 LLM 解读，不允许模型重新计算或补写事实
+- 提供 `GET /api/v1/analytics/weekly` 给独立趋势页使用，页面查询不会触发 LLM
+- 通过 SSE 展示查库、聚合、解读和完成节点
 
 #### NutritionRecordService
 

@@ -557,6 +557,18 @@ function isDraftGenerationTrace(event) {
     ].includes(event.node)
   }
 
+  if (event.workflow === 'weekly_trend_report') {
+    return [
+      'weekly_report_start',
+      'query_weekly_workouts',
+      'query_weekly_nutrition',
+      'query_weekly_body_status',
+      'aggregate_weekly_metrics',
+      'weekly_report_llm',
+      'weekly_report_complete',
+    ].includes(event.node)
+  }
+
   return false
 }
 
@@ -1003,7 +1015,7 @@ function MessageRow({ message, sending, onDraftAction, now }) {
   )
 }
 
-function ChatWorkspace({ session, onLogout, onOpenHistory }) {
+function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends }) {
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState([])
   const [activeSessionId, setActiveSessionId] = useState(null)
@@ -2206,17 +2218,30 @@ function ChatWorkspace({ session, onLogout, onOpenHistory }) {
             {creatingSession ? '创建中...' : '新建对话'}
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setSidebarOpen(false)
-              onOpenHistory()
-            }}
-            className="mx-3 mt-3 flex items-center justify-between rounded-[1.25rem] bg-[rgba(79,140,255,0.07)] px-4 py-3 text-left text-sm font-semibold text-[var(--accent)] transition-all duration-300 hover:bg-[rgba(79,140,255,0.12)]"
-          >
-            <span>训练历史</span>
-            <span className="text-lg leading-none">↗</span>
-          </button>
+          <div className="mx-3 mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSidebarOpen(false)
+                onOpenHistory()
+              }}
+              className="flex items-center justify-between rounded-[1.15rem] bg-[rgba(79,140,255,0.07)] px-3.5 py-3 text-left text-xs font-semibold text-[var(--accent)] transition-all duration-300 hover:bg-[rgba(79,140,255,0.12)]"
+            >
+              <span>训练历史</span>
+              <span className="text-base leading-none">↗</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSidebarOpen(false)
+                onOpenWeeklyTrends()
+              }}
+              className="flex items-center justify-between rounded-[1.15rem] bg-[rgba(84,185,156,0.1)] px-3.5 py-3 text-left text-xs font-semibold text-[#328970] transition-all duration-300 hover:bg-[rgba(84,185,156,0.16)]"
+            >
+              <span>周报趋势</span>
+              <span className="text-base leading-none">↗</span>
+            </button>
+          </div>
 
           <div className="app-scrollbar mt-5 flex-1 space-y-5 overflow-y-auto px-3 pb-3">
             <SessionSection

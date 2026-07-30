@@ -69,6 +69,7 @@ LLM 被要求只输出 JSON，例如：
 | `recent_health_summary` | 最近健康情况总结 | `workout_summary_agent` | `query` | `ready` | 已接入最近 7 天训练、饮食、身体状态和长期计划的并发查询与总结 |
 | `today_workout_recommendation` | 当日训练计划推荐 | `workout_recommendation_agent` | `plan` | `ready` | 已接入最新长期计划和最近 7 天训练记录的并发查询与今日训练建议生成 |
 | `workout_history_query` | 训练日志查询与回顾 | `workout_history_query_service` | `query` | `ready` | 支持按日期、部位、动作筛选真实训练记录，并返回确定性统计和动作明细 |
+| `weekly_trend_report` | 周报与跨周趋势 | `weekly_trend_report_service` | `query` | `ready` | 按自然周对比训练、饮食和恢复指标，聊天生成周报，独立页面展示趋势图 |
 | `today_nutrition_record` | 当日饮食记录 | `nutrition_record_react_writer` | `nutrition` | `ready` | 已支持 LangGraph ReAct 营养 loop、今日上下文填充、草稿确认和饮食表落库 |
 | `today_body_status_record` | 当日睡眠和身体状态记录 | `body_status_writer` | `body_status` | `ready` | 已支持睡眠、疲劳、酸痛、体重、情绪等解析和身体状态表落库 |
 | `user_workout_plan_update` | 用户健身计划更新 | `workout_plan_updater` | `plan` | `ready` | 已接入长期训练计划提取、草稿确认和增量入库模块 |
@@ -219,6 +220,23 @@ LLM 被要求只输出 JSON，例如：
 - `agent/src/fitmind_agent/services/workout_history_service.py`
 - `agent/src/fitmind_agent/api/routes/workouts.py`
 - `agent/src/fitmind_agent/prompts/workout_history_query/`
+
+### 5.9 周报与趋势
+
+当最终意图是 `weekly_trend_report` 时，系统会进入周报工作流：
+
+1. 当前周按本周一至今天统计，历史周按完整自然周统计，并与上周同长度周期比较
+2. 通过三个并发任务读取训练、饮食和身体状态数据
+3. `WeeklyAnalyticsService` 确定性计算训练频率、饮食日均值、恢复均值、每日序列和部位分布
+4. 聊天入口把已计算指标交给 LLM 生成简洁周报，模型不参与算数
+5. 独立页面调用 `GET /api/v1/analytics/weekly`，只展示确定性统计，不产生 LLM 调用
+6. SSE 输出查询、聚合、解读和完成节点，不经过草稿确认
+
+意图边界：
+
+- “本周周报、与上周相比、最近是否进步”进入 `weekly_trend_report`
+- “最近恢复怎么样”进入 `recent_health_summary`
+- “上周练了什么、查卧推记录”进入 `workout_history_query`
 
 ---
 

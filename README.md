@@ -60,7 +60,7 @@ FitMind 当前由两部分组成：
   → ChatService（主编排器、session 管理）
   → IntentClassifier（关键词 + LLM 双模意图分类）
   → IntentRouter（意图 → 模块路由）
-  → ServiceChain（健康总结 → 训练推荐 → 训练历史 → 饮食 → 身体状态 → 训练记录 → 计划更新）
+  → ServiceChain（健康总结 → 周报趋势 → 训练推荐 → 训练历史 → 饮食 → 身体状态 → 训练记录 → 计划更新）
   → 草稿确认 → 结构化落库
 ```
 
@@ -82,6 +82,7 @@ FitMind 当前由两部分组成：
 | 功能 | 意图 | 说明 |
 |------|------|------|
 | 最近健康总结 | `recent_health_summary` | 并发查询最近 7 天训练、饮食、身体状态和长期计划，LLM 汇总生成结构化总结 |
+| 周报与趋势 | `weekly_trend_report` | 按自然周确定性计算训练、饮食和恢复指标，对比上周同期并生成简洁周报 |
 | 今日训练推荐 | `today_workout_recommendation` | 并发查询最新长期计划和最近 7 天训练记录，LLM 结合恢复状态生成训练建议 |
 | 训练日志查询与回顾 | `workout_history_query` | 按日期、部位和动作筛选真实训练记录，返回确定性统计与动作明细 |
 
@@ -104,7 +105,6 @@ FitMind 当前由两部分组成：
 | 功能 | 说明 |
 |------|------|
 | 澄清追问 | `unknown` 意图已预留路由，当置信度不足时的主动追问逻辑待实现 |
-| 周报与趋势分析 | 基于结构化数据的健身趋势可视化和复盘 |
 | 记忆冲突处理 | Agent 提取的长期记忆与用户显式记忆冲突时的协调机制 |
 | 移动端适配 | 当前以桌面端为主 |
 
@@ -114,7 +114,7 @@ FitMind 当前由两部分组成：
 
 ### 前端
 
-- `React 19` + `Vite 8` + `Tailwind CSS 4`
+- `React 19` + `Vite 8` + `Tailwind CSS 4` + `Recharts 3`
 - SSE 流式消费 + 打字机渲染
 - Agent 执行过程时间线可视化（`AgentThoughtProcess`）
 - 草稿确认卡片交互（确认保存 / 取消保存 / 纠正错误）
@@ -141,6 +141,7 @@ FitMind 当前由两部分组成：
 
 | 日期 | 提交 | 更新内容 |
 |------|------|---------|
+| 2026-07-30 | 当前版本 | 新增自然周周报、跨周确定性统计、趋势图与聊天 SSE 周报链路 |
 | 2026-06-16 | `49d2e47` | 新增最近健康总结，并发查询训练/饮食/身体状态/计划 |
 | 2026-06-16 | `c3f2b91` | 前端 Agent 执行过程可视化，完善训练记录展示 |
 | 2026-06-15 | `9422e5e` | 新增 LLM token 使用统计（调用明细 + 对话聚合） |
@@ -156,19 +157,18 @@ FitMind 当前由两部分组成：
 
 ### 近期
 
-- 当前轮：完善今日训练推荐，更新文档一致性
 - 澄清追问模块（`unknown` 意图路由已预留）
 - 前端展示每轮对话 token 消耗和 session 累计消耗
+- 完善训练重量和次数的标准化字段，为训练容量趋势提供可靠输入
 
 ### 中期
 
-- 训练日志查询与回顾界面
 - 构建可解释的健身记忆系统
 - 记忆冲突处理与人工确认
 
 ### 后续
 
-- 周报、复盘和趋势分析
+- 多周与月度趋势分析
 - 移动端适配
 - 支持自定义训练计划周期模板
 
@@ -215,6 +215,7 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 - 流式对话：`POST /api/v1/chat/stream`
 - 直连 LLM：`POST /api/v1/llm/chat`
 - 训练历史：`GET /api/v1/workouts/history?user_id=1&start_date=2026-07-24&end_date=2026-07-30`
+- 周报趋势：`GET /api/v1/analytics/weekly?user_id=1&anchor_date=2026-07-30`
 
 ---
 
@@ -232,6 +233,7 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 | [docs/project-overview.md](docs/project-overview.md) | 原始长版项目说明备份 |
 | [docs/intent-routing-test-report.md](docs/intent-routing-test-report.md) | 意图识别联调测试报告 |
 | [docs/workout-record-workflow-report.md](docs/workout-record-workflow-report.md) | 训练记录提取与确认流程报告 |
+| [docs/weekly-trends-design.md](docs/weekly-trends-design.md) | 自然周对比、统计口径和趋势页接口设计 |
 
 ---
 

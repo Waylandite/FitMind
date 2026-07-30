@@ -8,6 +8,7 @@ IntentCode = Literal[
     "recent_health_summary",
     "today_workout_recommendation",
     "workout_history_query",
+    "weekly_trend_report",
     "today_nutrition_record",
     "today_body_status_record",
     "user_workout_plan_update",

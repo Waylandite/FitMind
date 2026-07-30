@@ -1,0 +1,1 @@
+"""Shared fitness domain rules."""

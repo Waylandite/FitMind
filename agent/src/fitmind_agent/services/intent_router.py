@@ -34,6 +34,13 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         description="已接入训练日志查询、动作筛选和确定性回顾模块。",
         status="ready",
     ),
+    "weekly_trend_report": IntentModuleRoute(
+        intent="weekly_trend_report",
+        module_name="weekly_trend_report_service",
+        db_intent_type="query",
+        description="已接入自然周跨周对比、趋势统计和周报解读模块。",
+        status="ready",
+    ),
     "today_nutrition_record": IntentModuleRoute(
         intent="today_nutrition_record",
         module_name="nutrition_record_react_writer",

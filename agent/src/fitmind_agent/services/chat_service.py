@@ -34,6 +34,7 @@ from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 from fitmind_agent.services.today_workout_recommendation_service import (
     TodayWorkoutRecommendationService,
 )
+from fitmind_agent.services.weekly_trend_report_service import WeeklyTrendReportService
 from fitmind_agent.services.workout_plan_service import WorkoutPlanService
 from fitmind_agent.services.workout_history_service import WorkoutHistoryService
 from fitmind_agent.services.workout_record_service import WorkoutRecordService
@@ -111,6 +112,37 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=reply,
+                )
+            weekly_result = None
+            for weekly_event in WeeklyTrendReportService(
+                llm_service=self.llm_service,
+            ).stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            ):
+                if weekly_event.get("kind") == "result":
+                    weekly_result = weekly_event.get("result")
+
+            if weekly_result is not None and weekly_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=weekly_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                return ChatResponse(
+                    user_id=payload.user_id,
+                    thread_id=payload.thread_id,
+                    session_id=session_id,
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source,
+                    module_name=module_route.module_name,
+                    module_status=module_route.status,
+                    model="fitmind-workflow",
+                    reply=weekly_result.reply,
                 )
             recommendation_result = None
             for recommendation_event in TodayWorkoutRecommendationService(
@@ -340,7 +372,7 @@ class ChatService:
             status="thinking",
             node="intent_classifier",
             title="正在识别用户意图",
-            detail="Agent 正在判断本轮输入属于训练、饮食、身体状态、计划更新还是普通对话。",
+            detail="Agent 正在判断本轮输入属于记录、推荐、查询、周报还是普通对话。",
         )
         intent_result = self._classify_with_workflow_context(payload, session_id)
         module_route = self.intent_router.route(intent_result)
@@ -458,6 +490,58 @@ class ChatService:
                         "workflow": {
                             "name": "recent_health_summary",
                             "action": summary_result.action,
+                        },
+                    }
+                )
+                return
+
+            weekly_service = WeeklyTrendReportService(llm_service=self.llm_service)
+            weekly_result = None
+            for weekly_event in weekly_service.stream_maybe_handle(
+                user_id=payload.user_id,
+                user_query=payload.message,
+                intent_result=intent_result,
+            ):
+                if weekly_event.get("kind") == "progress":
+                    yield self._format_sse(
+                        {
+                            "type": "agent_state",
+                            **(weekly_event.get("event") or {}),
+                        }
+                    )
+                    continue
+                if weekly_event.get("kind") == "result":
+                    weekly_result = weekly_event.get("result")
+
+            if weekly_result is not None and weekly_result.handled:
+                self._persist_conversation_logs(
+                    payload=payload,
+                    reply=weekly_result.reply,
+                    session_id=session_id,
+                    db_intent_type="query",
+                )
+                self.summary_service.schedule_session_compression(session_id)
+                yield from self._format_text_delta_events(
+                    weekly_result.reply,
+                    model="fitmind-workflow",
+                )
+                yield self._format_sse(
+                    {
+                        "type": "done",
+                        "reply": weekly_result.reply,
+                        "model": "fitmind-workflow",
+                        "thread_id": payload.thread_id,
+                        "session_id": session_id,
+                        "intent": intent_result.intent,
+                        "intent_confidence": intent_result.confidence,
+                        "intent_source": intent_result.source,
+                        "module": {
+                            "name": module_route.module_name,
+                            "status": module_route.status,
+                        },
+                        "workflow": {
+                            "name": "weekly_trend_report",
+                            "action": weekly_result.action,
                         },
                     }
                 )
