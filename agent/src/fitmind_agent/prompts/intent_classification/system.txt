@@ -30,7 +30,8 @@
 {
   "intent": "today_workout_record",
   "confidence": 0.86,
-  "reason": "一句话说明判断依据"
+  "reason": "一句话说明判断依据",
+  "candidates": [{"intent": "today_workout_record", "confidence": 0.86, "reason": "..."}]
 }
 
-confidence 范围是 0 到 1。明确命中时不低于 0.75，存在歧义时低于 0.7。
+confidence 范围是 0 到 1。candidates 最多 3 个，按 confidence 降序排列。明确命中时不低于 0.75，存在歧义时低于 0.7。不要自行决定是否需要澄清。

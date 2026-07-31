@@ -2,6 +2,10 @@
 
 # FitMind
 
+## 意图澄清
+
+当分类结果不够安全（低置信度、候选过于接近、未知意图或多个写入操作冲突）时，FitMind 会先展示最多三个确定性选项，而不是执行写入。澄清状态按会话保存，默认 30 分钟过期、最多两轮；按钮选择和自由文本都会经过服务端校验。客户端可通过 `GET /api/v1/memories/sessions/{session_id}/clarification?user_id={id}` 恢复未完成的澄清。
+
 ### 用自然语言记录训练、饮食与身体状态，让健身数据真正沉淀下来
 
 [![Python](https://img.shields.io/badge/Python-3.11+-2F6690?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean
+from sqlalchemy import BigInteger
 from sqlalchemy import CheckConstraint
 from sqlalchemy import Date
 from sqlalchemy import DateTime
@@ -65,6 +66,7 @@ class User(Base, TimestampMixin):
     nutrition_record_drafts: Mapped[list[NutritionRecordDraft]] = relationship(back_populates="user")
     body_status_record_drafts: Mapped[list[BodyStatusRecordDraft]] = relationship(back_populates="user")
     workout_plan_drafts: Mapped[list[WorkoutPlanDraft]] = relationship(back_populates="user")
+    intent_clarifications: Mapped[list[IntentClarification]] = relationship(back_populates="user")
 
 
 class UserProfile(Base, TimestampMixin):
@@ -559,6 +561,39 @@ class ChatSession(Base, TimestampMixin):
         back_populates="session", cascade="all, delete-orphan"
     )
     derived_memories: Mapped[list[AgentDerivedMemory]] = relationship(back_populates="source_session")
+    intent_clarifications: Mapped[list[IntentClarification]] = relationship(back_populates="session")
+
+
+class IntentClarification(Base, TimestampMixin):
+    __tablename__ = "intent_clarifications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'resolved', 'cancelled', 'expired', 'failed', 'superseded')",
+            name="chk_intent_clarifications_status",
+        ),
+    )
+
+    # SQLite only autoincrements columns whose rendered type is exactly INTEGER;
+    # production MySQL still receives BIGINT.
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    original_query: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_intents: Mapped[list | dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    active_session_key: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    last_question: Mapped[str] = mapped_column(Text, nullable=False)
+    last_user_reply: Mapped[str | None] = mapped_column(Text)
+    resolved_intent: Mapped[str | None] = mapped_column(String(80))
+    resolved_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    resolution_source: Mapped[str | None] = mapped_column(String(30))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="intent_clarifications")
+    session: Mapped[ChatSession] = relationship(back_populates="intent_clarifications")
 
 
 class ChatSessionSummary(Base, TimestampMixin):

@@ -1161,3 +1161,6 @@ V1 落库方式：
    记忆冲突与人工确认表
 
 当前阶段不建议一起做进 MVP。
+# 意图澄清表
+
+`intent_clarifications` 以 `(user_id, session_id, status)` 索引未完成澄清，保存 `original_query`、JSON 候选、轮数、问题/回复、过期时间和 resolution 元数据。状态为 `pending`、`resolved`、`cancelled`、`expired`、`failed` 或 `superseded`；服务层保证一个会话仅保留一个有效 pending 记录。

@@ -73,7 +73,8 @@ INTENT_ROUTES: dict[IntentCode, IntentModuleRoute] = {
         intent="unknown",
         module_name="clarification_agent",
         db_intent_type="query",
-        description="待接入澄清追问模块。",
+        description="意图不确定时进入持久化澄清状态机。",
+        status="ready",
     ),
 }
 

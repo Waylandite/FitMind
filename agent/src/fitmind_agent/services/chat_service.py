@@ -1,7 +1,7 @@
 import json
 from collections.abc import Iterator
 from datetime import date
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -24,6 +24,8 @@ from fitmind_agent.schemas.llm import LLMMessage
 from fitmind_agent.services.chat_context import ConversationContextBuilder
 from fitmind_agent.services.body_status_record_service import BodyStatusRecordService
 from fitmind_agent.services.intent_classifier import IntentClassifier
+from fitmind_agent.services.intent_clarification_service import IntentClarificationService
+from fitmind_agent.services.intent_resolution_policy import IntentResolutionPolicy
 from fitmind_agent.services.intent_router import IntentRouter
 from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.nutrition_record_service import NutritionRecordService
@@ -66,6 +68,7 @@ class ChatService:
         self.prompt_loader = PromptLoader()
         self.intent_classifier = IntentClassifier(llm_service=self.llm_service)
         self.intent_router = IntentRouter()
+        self.intent_policy = IntentResolutionPolicy()
         self.context_builder = (
             ConversationContextBuilder(
                 ConversationLogRepository(db),
@@ -78,12 +81,14 @@ class ChatService:
         self.summary_service = SessionSummaryService(llm_service=self.llm_service)
 
     def handle(self, payload: ChatRequest) -> ChatResponse:
+        payload._original_message = payload.message
         session_id = self._resolve_session_id(payload)
         intent_result = self._classify_with_workflow_context(payload, session_id)
         module_route = self.intent_router.route(intent_result)
 
         if payload.persist_log and payload.user_id is not None and self.db is not None:
             session_id = session_id or self._ensure_active_session(payload)
+            turn_clarification_event: dict | None = None
             pending_context = self._get_pending_workflow_context(payload, session_id)
             self._persist_intent_recognition(
                 payload=payload,
@@ -113,6 +118,29 @@ class ChatService:
                     model="fitmind-workflow",
                     reply=reply,
                 )
+            clarification = self._maybe_handle_intent_clarification(
+                payload=payload, session_id=session_id, intent_result=intent_result
+            )
+            if clarification.get("record") is not None and clarification.get("action") in {"resolved", "superseded"}:
+                turn_clarification_event = IntentClarificationService.event(clarification["record"], clarification["action"])
+            if clarification["waiting"]:
+                reply = clarification["reply"]
+                self._persist_conversation_logs(
+                    payload=payload, reply=reply, session_id=session_id, db_intent_type="query"
+                )
+                return ChatResponse(
+                    user_id=payload.user_id, thread_id=payload.thread_id, session_id=session_id,
+                    intent=intent_result.intent, intent_confidence=intent_result.confidence,
+                    intent_source=intent_result.source, module_name="intent_clarification",
+                    module_status="ready", model="fitmind-workflow", reply=reply,
+                    clarification=IntentClarificationService.event(clarification["record"], clarification["action"]) if clarification.get("record") else None,
+                )
+            intent_result = clarification.get("intent_result", intent_result)
+            if clarification.get("effective_query"):
+                payload = payload.model_copy(update={"message": clarification["effective_query"]})
+            module_route = self.intent_router.route(intent_result)
+            if clarification.get("action") == "resolved":
+                self._persist_intent_recognition(payload=payload, session_id=session_id, intent_result=intent_result, module_route=module_route)
             weekly_result = None
             for weekly_event in WeeklyTrendReportService(
                 llm_service=self.llm_service,
@@ -143,6 +171,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=weekly_result.reply,
+                    clarification=turn_clarification_event,
                 )
             recommendation_result = None
             for recommendation_event in TodayWorkoutRecommendationService(
@@ -174,6 +203,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=recommendation_result.reply,
+                    clarification=turn_clarification_event,
                 )
             history_result = None
             for history_event in WorkoutHistoryService(
@@ -206,6 +236,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=history_result.reply,
+                    clarification=turn_clarification_event,
                 )
             nutrition_result = NutritionRecordService(
                 db=self.db,
@@ -235,6 +266,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=nutrition_result.reply,
+                    clarification=turn_clarification_event,
                 )
 
             body_status_result = BodyStatusRecordService(
@@ -249,7 +281,7 @@ class ChatService:
             if body_status_result.handled:
                 self._persist_conversation_logs(
                     payload=payload,
-                    reply=body_status_result.reply,
+                   reply=body_status_result.reply,
                     session_id=session_id,
                     db_intent_type="body_status",
                 )
@@ -265,6 +297,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=body_status_result.reply,
+                    clarification=turn_clarification_event,
                 )
 
             workout_result = WorkoutRecordService(
@@ -279,7 +312,7 @@ class ChatService:
             if workout_result.handled:
                 self._persist_conversation_logs(
                     payload=payload,
-                    reply=workout_result.reply,
+                   reply=workout_result.reply,
                     session_id=session_id,
                     db_intent_type="workout",
                 )
@@ -295,6 +328,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=workout_result.reply,
+                    clarification=turn_clarification_event,
                 )
 
             plan_result = WorkoutPlanService(
@@ -309,7 +343,7 @@ class ChatService:
             if plan_result.handled:
                 self._persist_conversation_logs(
                     payload=payload,
-                    reply=plan_result.reply,
+                   reply=plan_result.reply,
                     session_id=session_id,
                     db_intent_type="plan",
                 )
@@ -325,6 +359,7 @@ class ChatService:
                     module_status=module_route.status,
                     model="fitmind-workflow",
                     reply=plan_result.reply,
+                    clarification=turn_clarification_event,
                 )
 
         request = LLMChatRequest(
@@ -355,9 +390,11 @@ class ChatService:
             module_status=module_route.status,
             model=llm_result.model,
             reply=llm_result.content,
+            clarification=turn_clarification_event if payload.persist_log and payload.user_id is not None and self.db is not None else None,
         )
 
     def stream_handle(self, payload: ChatRequest) -> Iterator[str]:
+        payload._original_message = payload.message
         session_id = self._resolve_session_id(payload)
         if payload.persist_log and payload.user_id is not None and self.db is not None:
             session_id = session_id or self._ensure_active_session(payload)
@@ -423,6 +460,34 @@ class ChatService:
                     }
                 )
                 return
+            clarification = self._maybe_handle_intent_clarification(
+                payload=payload, session_id=session_id, intent_result=intent_result
+            )
+            if clarification["waiting"]:
+                record = clarification.get("record")
+                reply = clarification["reply"]
+                self._persist_conversation_logs(
+                    payload=payload, reply=reply, session_id=session_id, db_intent_type="query"
+                )
+                yield self._format_agent_state_event(status="thinking", node="clarification_start", title="正在澄清意图", detail="当前输入存在歧义，暂不执行任何记录操作。", workflow="intent_clarification")
+                yield self._format_agent_state_event(status="success", node="build_clarification_options", title="已生成澄清选项", detail="请选择最符合本次需求的操作。", workflow="intent_clarification")
+                if record is not None:
+                    yield self._format_sse(IntentClarificationService.event(record, clarification["action"]))
+                if clarification["action"] in {"requested", "reasked", "invalid"}:
+                    yield self._format_agent_state_event(status="queue", node="awaiting_clarification", title="等待你的选择", detail="可点击选项、补充说明或取消本次操作。", workflow="intent_clarification")
+                yield from self._format_text_delta_events(reply, model="fitmind-workflow")
+                yield self._format_sse({"type": "done", "reply": reply, "model": "fitmind-workflow", "thread_id": payload.thread_id, "session_id": session_id, "intent": intent_result.intent, "intent_confidence": intent_result.confidence, "intent_source": intent_result.source, "module": {"name": "intent_clarification", "status": "ready"}, "workflow": {"name": "intent_clarification", "action": "awaiting_user" if clarification["action"] in {"requested", "reasked", "invalid"} else clarification["action"], "clarification_id": record.id if record is not None else None}})
+                return
+            intent_result = clarification.get("intent_result", intent_result)
+            if clarification.get("effective_query"):
+                payload = payload.model_copy(update={"message": clarification["effective_query"]})
+            module_route = self.intent_router.route(intent_result)
+            if clarification.get("action") == "resolved":
+                self._persist_intent_recognition(payload=payload, session_id=session_id, intent_result=intent_result, module_route=module_route)
+            if clarification.get("action") in {"resolved", "superseded"} and clarification.get("record") is not None:
+                if clarification["action"] == "resolved":
+                    yield self._format_agent_state_event(status="success", node="resolve_clarification", title="意图澄清完成", detail="将继续处理已确认的需求。", workflow="intent_clarification")
+                yield self._format_sse(IntentClarificationService.event(clarification["record"], clarification["action"]))
         yield self._format_sse(
             {
                 "type": "intent",
@@ -1027,7 +1092,11 @@ class ChatService:
         if pending_context is not None and self._looks_like_pending_followup(payload.message):
             return self._pending_context_to_intent(pending_context)
 
-        intent_result = self.intent_classifier.classify(payload.message)
+        context = ""
+        if self.db is not None and session_id is not None:
+            recent = ConversationLogRepository(self.db).list_recent_by_session(session_id, limit=4)
+            context = "\n".join(f"{row.role}: {row.message_text}" for row in recent)
+        intent_result = self.intent_classifier.classify(payload.message, context=context)
         if (
             pending_context is not None
             and intent_result.intent in {"unknown", "general_chat"}
@@ -1036,6 +1105,63 @@ class ChatService:
             return self._pending_context_to_intent(pending_context)
 
         return intent_result
+
+    def _maybe_handle_intent_clarification(
+        self,
+        *,
+        payload: ChatRequest,
+        session_id: int,
+        intent_result: IntentRecognitionResult,
+    ) -> dict[str, Any]:
+        """Resolve an existing clarification or create one before any business service runs."""
+        if self.db is None or payload.user_id is None:
+            return {"waiting": False, "intent_result": intent_result}
+        service = IntentClarificationService(self.db)
+        active = service.repo.get_active(user_id=payload.user_id, session_id=session_id)
+        if payload.clarification is not None:
+            request = payload.clarification
+            if request.action == "cancel":
+                record = service.cancel(
+                    clarification_id=request.id, user_id=payload.user_id, session_id=session_id
+                )
+                if record is None:
+                    return {"waiting": True, "record": active, "action": "invalid_terminal" if active is None else "invalid", "reply": "这条澄清已失效，请重新描述你的需求。"}
+                return {"waiting": True, "record": record, "action": "cancelled", "reply": "已取消本次操作，不会保存任何训练或健康数据。"}
+            record = service.select(
+                clarification_id=request.id, user_id=payload.user_id, session_id=session_id,
+                intent=request.selected_intent or "",
+            )
+            if record is None:
+                return {"waiting": True, "record": active, "action": "invalid_terminal" if active is None else "invalid", "reply": "该选择无效或已过期，请重新描述你的需求。"}
+            resolved = IntentRecognitionResult(
+                intent=record.resolved_intent, confidence=float(record.resolved_confidence or 1),
+                source="fallback", reason="用户通过澄清按钮确认意图。",
+            )
+            return {"waiting": False, "intent_result": resolved, "effective_query": record.original_query, "record": record, "action": "resolved"}
+
+        if active is not None:
+            if service.is_cancel(payload.message):
+                service.repo.update(active, {"status": "cancelled", "last_user_reply": payload.message, "resolved_at": datetime.now(timezone.utc)})
+                return {"waiting": True, "record": active, "action": "cancelled", "reply": "已取消本次操作，不会保存任何训练或健康数据。"}
+            candidate_names = {item.get("intent") for item in active.candidate_intents}
+            # Only a decisive request outside current options replaces the old
+            # clarification. Short answers such as "饮食" are interpreted with
+            # the original query below.
+            if not self.intent_policy.needs_clarification(intent_result) and intent_result.intent not in candidate_names:
+                service.repo.update(active, {"status": "superseded", "last_user_reply": payload.message, "resolved_at": datetime.now(timezone.utc)})
+                return {"waiting": False, "intent_result": intent_result, "record": active, "action": "superseded", "effective_query": payload.message}
+            retry_result = self.intent_classifier.classify_clarification(active.original_query, active.last_question, payload.message)
+            record = service.retry(active, retry_result, payload.message)
+            if record.status == "resolved":
+                return {"waiting": False, "intent_result": IntentRecognitionResult(intent=record.resolved_intent, confidence=float(record.resolved_confidence or 0), source="fallback", reason="通过用户补充澄清意图。"), "effective_query": f"{record.original_query}\n{payload.message}", "record": record, "action": "resolved"}
+            if record.status == "failed":
+                return {"waiting": True, "record": record, "action": "failed", "reply": "我仍无法确定要执行哪项操作，本次不会保存数据。请用完整句子重新告诉我你的需求。"}
+            return {"waiting": True, "record": record, "action": "reasked", "reply": record.last_question}
+
+        if self.intent_policy.needs_clarification(intent_result):
+            record = service.create(user_id=payload.user_id, session_id=session_id, query=payload.message, result=intent_result)
+            return {"waiting": True, "record": record, "action": "requested", "reply": record.last_question}
+        return {"waiting": False, "intent_result": intent_result}
 
     def _get_pending_workflow_context(
         self,
@@ -1350,7 +1476,7 @@ class ChatService:
             thread_id=payload.thread_id,
             session_id=session_id,
             role="user",
-            message_text=payload.message,
+            message_text=payload._original_message or payload.message,
             record_date=date.today(),
             intent_type=db_intent_type,
         )
@@ -1363,7 +1489,7 @@ class ChatService:
             record_date=date.today(),
             intent_type=db_intent_type,
         )
-        self._refresh_session_activity(session_id=session_id, message_text=payload.message)
+        self._refresh_session_activity(session_id=session_id, message_text=payload._original_message or payload.message)
 
     def _persist_intent_recognition(
         self,
@@ -1382,7 +1508,7 @@ class ChatService:
                 "user_id": payload.user_id,
                 "thread_id": payload.thread_id,
                 "session_id": session_id,
-                "message_text": payload.message,
+                "message_text": payload._original_message or payload.message,
                 "final_intent": intent_result.intent,
                 "confidence_score": Decimal(str(round(intent_result.confidence, 3))),
                 "source": intent_result.source,

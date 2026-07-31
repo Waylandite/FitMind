@@ -295,3 +295,10 @@ limit 20;
 1. `unknown` 澄清追问 — 当置信度不足时主动追问用户，缩小意图范围
 2. 意图识别精度优化 — 利用 `intent_recognition_logs` 中的错误分类做 prompt 迭代
 3. 健康总结和训练推荐的 LLM 质量迭代 — 收集真实用户反馈优化 prompt
+# 意图澄清安全闸
+
+分类器可返回至多三个候选，但是否执行由 `IntentResolutionPolicy` 决定：写入意图阈值为 0.78，查询/推荐为 0.70，普通对话为 0.65；首二候选差小于 0.15、unknown 或多个写入候选均进入澄清。澄清问题来自统一 IntentCatalog，不让模型决定问题或是否写入。
+
+`intent_clarifications` 记录原始输入、候选、轮次和最终状态。按钮必须匹配同一用户、会话和候选；自由文本最多重试两轮，第二轮仍不确定则失败且不会创建业务草稿。
+
+自由文本由 `intent_clarification/system.txt` 与 `user.txt` 专用提示解析，保留原始需求、问题和回答。SSE 在 requested、resolved、cancelled、failed、expired、superseded 时均发送 `type=clarification`；只有 requested/reasked 才以 `awaiting_user` 结束。

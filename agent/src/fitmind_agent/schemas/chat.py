@@ -1,7 +1,16 @@
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+
+class ClarificationInput(BaseModel):
+    id: int
+    action: Literal["select", "cancel"]
+    selected_intent: str | None = None
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     user_id: int | None = Field(default=None, description="Optional user identifier for persistence.")
     thread_id: str = Field(default="test-thread", description="Conversation thread identifier.")
     message: str = Field(..., min_length=1, description="User input text.")
@@ -12,6 +21,8 @@ class ChatRequest(BaseModel):
         default=False,
         description="Whether to write user/assistant messages into conversation_logs.",
     )
+    clarification: ClarificationInput | None = None
+    _original_message: str | None = PrivateAttr(default=None)
 
 
 class ChatResponse(BaseModel):
@@ -25,3 +36,4 @@ class ChatResponse(BaseModel):
     module_status: str | None = None
     model: str | None = None
     reply: str
+    clarification: dict | None = None

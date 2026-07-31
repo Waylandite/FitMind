@@ -20,8 +20,22 @@ from fitmind_agent.schemas.memory import UserDefinedMemoryCreate
 from fitmind_agent.schemas.memory import UserDefinedMemoryRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryUpdate
 from fitmind_agent.services.memory_service import MemoryService
+from fitmind_agent.repositories.intent_clarification import IntentClarificationRepository
+from fitmind_agent.services.intent_clarification_service import IntentClarificationService
 
 router = APIRouter(prefix="/memories", tags=["memory"])
+
+
+@router.get("/sessions/{session_id}/clarification")
+def get_active_intent_clarification(
+    session_id: int,
+    user_id: int,
+    db: Session = Depends(get_db_session),
+) -> dict | None:
+    record = IntentClarificationRepository(db).get_active(user_id=user_id, session_id=session_id)
+    if record is None:
+        return None
+    return IntentClarificationService.event(record)
 
 
 @router.post("/user-defined", response_model=UserDefinedMemoryRead)

@@ -513,3 +513,6 @@ FitMind V1 的实际架构是一个 顺序服务链，核心设计决策是：
 - Token 统计作为旁路系统，不影响主业务链路
 
 所有 LLM 调用通过 `DeepSeekLLMClient` 统一，所有数据库写入通过 Repository 层统一，所有结构化数据通过 Pydantic schema 校验。
+# 意图澄清状态机
+
+ChatService 在业务工作流前依次检查待确认业务草稿和 IntentResolutionPolicy。草稿优先；否则进入 `clarification_start → build_clarification_options → awaiting_clarification`。用户选择或补充后进入 `resolve_clarification`，成功后才路由唯一的实际工作流。SSE 使用 `type=clarification`，等待完成事件的 workflow 为 `intent_clarification/awaiting_user`。

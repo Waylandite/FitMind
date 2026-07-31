@@ -938,7 +938,40 @@ function FieldLabel({ label, hint }) {
   )
 }
 
-function MessageRow({ message, sending, onDraftAction, now }) {
+function IntentClarificationCard({ clarification, disabled, onAction }) {
+  if (!clarification) return null
+  const locked = clarification.submitting || (clarification.status && clarification.status !== 'pending')
+  const statusLabel = {
+    cancelled: '已取消，本次不会写入数据。',
+    failed: '未能确认意图，请重新用完整句子描述需求。',
+    expired: '这次澄清已过期，请重新描述需求。',
+    superseded: '已被新的需求替代。',
+    resolved: '已确认，正在继续处理。',
+  }[clarification.status]
+
+  return (
+    <section className="mt-3 overflow-hidden rounded-[1.25rem] border border-[rgba(79,140,255,0.14)] bg-[linear-gradient(135deg,rgba(95,137,255,0.08),rgba(118,208,181,0.10))] p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold tracking-[0.12em] text-[var(--accent)]">确认本次意图</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--text-soft)]">{clarification.question}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[var(--text-faint)]">{clarification.attempt}/{clarification.max_attempts}</span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {(clarification.options ?? []).map((option) => (
+          <button key={option.intent} type="button" disabled={disabled || locked} onClick={() => onAction('select', clarification, option.intent)} className="rounded-xl bg-white/80 px-3 py-2.5 text-left shadow-sm ring-1 ring-[rgba(47,70,126,0.06)] transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60">
+            <span className="block text-sm font-semibold text-[var(--text)]">{option.label}</span>
+            <span className="mt-0.5 block text-xs leading-5 text-[var(--text-faint)]">{option.description}</span>
+          </button>
+        ))}
+      </div>
+      {locked ? <p className="mt-3 text-xs text-[var(--text-faint)]">{clarification.submitting ? '正在提交你的选择…' : statusLabel}</p> : <button type="button" disabled={disabled} onClick={() => onAction('cancel', clarification)} className="mt-3 text-xs font-medium text-[var(--danger)] disabled:opacity-60">取消本次操作</button>}
+    </section>
+  )
+}
+
+function MessageRow({ message, sending, onDraftAction, onClarificationAction, now }) {
   const meta = roleMeta(message.role)
   const isUser = message.role === 'user'
   const isStreamingAssistant = message.role === 'assistant' && message.streaming
@@ -998,6 +1031,7 @@ function MessageRow({ message, sending, onDraftAction, now }) {
               disabled={sending || Boolean(message.draftCard?.resolvedLabel)}
               onAction={(action, card) => onDraftAction(action, card, message.id)}
             />
+            <IntentClarificationCard clarification={message.clarification} disabled={sending} onAction={(action, card, intent) => onClarificationAction(action, card, intent, message.id)} />
           </>
         ) : (
           <div className="whitespace-pre-wrap break-words rounded-[1.4rem] rounded-br-md bg-[linear-gradient(135deg,#5f89ff,#74ceb5)] px-4 py-3 text-[15px] leading-7 tracking-[0.005em] text-white shadow-[0_16px_34px_rgba(95,137,255,0.22)] sm:text-[16px]">
@@ -1679,27 +1713,38 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
       setLoadingMessages(true)
       setErrorMessage('')
       try {
-        const response = await fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/messages`)
+        const [response, clarificationResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/messages`),
+          fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/clarification?user_id=${userId}`),
+        ])
         if (!response.ok) {
           throw new Error(`会话历史请求失败: ${response.status}`)
         }
-
         const records = await response.json()
+        const clarification = clarificationResponse.ok ? await clarificationResponse.json() : null
+        if (!clarificationResponse.ok) {
+          setErrorMessage(`澄清状态恢复失败: ${clarificationResponse.status}`)
+        }
         if (cancelled) {
           return
         }
 
+        const lastAssistantIndex = records.map((record) => record.role).lastIndexOf('assistant')
         if (!records.length) {
-          setMessages([emptyAssistantCard])
+          setMessages([clarification ? { ...emptyAssistantCard, clarification, content: clarification.question } : emptyAssistantCard])
         } else {
-          setMessages(
-            records.map((record) => ({
+          const restored =
+            records.map((record, index) => ({
               id: `message-${record.id}`,
               role: record.role,
               content: record.message_text,
               createdAt: record.created_at,
-            })),
-          )
+              clarification: clarification && index === lastAssistantIndex ? clarification : undefined,
+            }))
+          if (clarification && lastAssistantIndex < 0) {
+            restored.push({ id: `clarification-${clarification.clarification_id}`, role: 'assistant', content: clarification.question, createdAt: new Date().toISOString(), clarification })
+          }
+          setMessages(restored)
         }
       } catch (error) {
         if (!cancelled) {
@@ -1717,7 +1762,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     return () => {
       cancelled = true
     }
-  }, [activeSessionId])
+  }, [activeSessionId, userId])
 
   const refreshSessions = async (nextActiveId = activeSessionId) => {
     const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
@@ -1768,7 +1813,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     setSidebarOpen(false)
   }
 
-  const handleSend = async (prefill) => {
+  const handleSend = async (prefill, clarificationInput = null) => {
     const text = (prefill ?? draft).trim()
 
     if (!text || sending || !activeSession) {
@@ -1831,6 +1876,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
           thread_id: activeSession.thread_id,
           message: text,
           persist_log: true,
+          clarification: clarificationInput,
         }),
       })
 
@@ -1897,6 +1943,18 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
             )
             requestAutoScroll('auto')
           }
+          return
+        }
+
+        if (event.type === 'clarification') {
+          setMessages((current) => {
+            const existing = current.find((message) => message.clarification?.clarification_id === event.clarification_id)
+            return current.map((message) =>
+              message.clarification?.clarification_id === event.clarification_id || (!existing && message.id === assistantMessageIdRef.current)
+                ? { ...message, clarification: event }
+                : message,
+            )
+          })
           return
         }
 
@@ -2075,6 +2133,13 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
         composerRef.current?.focus()
       })
     }
+  }
+
+  const handleClarificationAction = (action, card, selectedIntent, messageId) => {
+    if (sending || !card) return
+    setMessages((current) => current.map((message) => message.id === messageId ? { ...message, clarification: { ...card, submitting: true } } : message))
+    const text = action === 'cancel' ? '取消' : `选择${selectedIntent}`
+    handleSend(text, { id: card.clarification_id, action, selected_intent: selectedIntent ?? null })
   }
 
   const handleComposerKeyDown = (event) => {
@@ -2617,6 +2682,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
                     sending={sending}
                     now={thinkingNow}
                     onDraftAction={handleDraftAction}
+                    onClarificationAction={handleClarificationAction}
                   />
                 ))}
               </div>

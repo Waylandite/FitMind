@@ -23,12 +23,19 @@ class KeywordIntentMatch(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
 
 
+class IntentCandidate(BaseModel):
+    intent: IntentCode
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str = ""
+
+
 class IntentRecognitionResult(BaseModel):
     intent: IntentCode
     confidence: float = Field(ge=0.0, le=1.0)
     source: Literal["llm", "keyword", "fallback"]
     reason: str = ""
     keyword_match: KeywordIntentMatch | None = None
+    candidates: list[IntentCandidate] = Field(default_factory=list)
 
 
 class IntentModuleRoute(BaseModel):

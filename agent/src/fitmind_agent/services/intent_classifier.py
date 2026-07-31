@@ -4,6 +4,7 @@ import json
 import re
 
 from fitmind_agent.schemas.intent import IntentCode
+from fitmind_agent.schemas.intent import IntentCandidate
 from fitmind_agent.schemas.intent import IntentRecognitionResult
 from fitmind_agent.schemas.intent import KeywordIntentMatch
 from fitmind_agent.services.llm_service import LLMService
@@ -145,9 +146,10 @@ class IntentClassifier:
         self.confidence_threshold = confidence_threshold
         self.keyword_threshold = keyword_threshold
 
-    def classify(self, user_query: str) -> IntentRecognitionResult:
+    def classify(self, user_query: str, context: str = "") -> IntentRecognitionResult:
         keyword_match = self.classify_by_keywords(user_query)
-        llm_result = self._classify_by_llm(user_query=user_query, keyword_match=keyword_match)
+        contextual_query = f"最近对话（仅供补全指代，当前输入优先）：\n{context}\n\n当前输入：\n{user_query}" if context else user_query
+        llm_result = self._classify_by_llm(user_query=contextual_query, keyword_match=keyword_match)
 
         if llm_result and llm_result.confidence >= self.confidence_threshold:
             return llm_result
@@ -159,6 +161,7 @@ class IntentClassifier:
                 source="keyword",
                 reason="关键词规则命中，模型置信度不足或模型识别失败。",
                 keyword_match=keyword_match,
+                candidates=[IntentCandidate(intent=keyword_match.intent, confidence=keyword_match.confidence)],
             )
 
         return IntentRecognitionResult(
@@ -167,6 +170,7 @@ class IntentClassifier:
             source="fallback",
             reason=llm_result.reason if llm_result else "未获得稳定意图。",
             keyword_match=keyword_match,
+            candidates=llm_result.candidates if llm_result else [],
         )
 
     def classify_by_keywords(self, user_query: str) -> KeywordIntentMatch | None:
@@ -192,6 +196,19 @@ class IntentClassifier:
 
         return max(scored_matches, key=lambda item: item.confidence)
 
+    def classify_clarification(self, original_query: str, last_question: str, answer: str) -> IntentRecognitionResult:
+        """Dedicated, context-aware parser for an answer to a clarification."""
+        keyword_match = self.classify_by_keywords(answer)
+        system_prompt = self.prompt_loader.load("intent_clarification/system.txt")
+        user_prompt = self.prompt_loader.render(
+            "intent_clarification/user.txt",
+            original_query=original_query,
+            last_question=last_question,
+            answer=answer,
+        )
+        result = self._classify_prompt(system_prompt, user_prompt, keyword_match, "intent_clarification")
+        return result or IntentRecognitionResult(intent="unknown", confidence=0.0, source="fallback", reason="澄清解析失败。")
+
     def _classify_by_llm(
         self,
         *,
@@ -206,8 +223,11 @@ class IntentClassifier:
             keyword_hint=keyword_hint,
         )
 
+        return self._classify_prompt(system_prompt, user_prompt, keyword_match, "intent_classifier")
+
+    def _classify_prompt(self, system_prompt: str, user_prompt: str, keyword_match: KeywordIntentMatch | None, node_name: str) -> IntentRecognitionResult | None:
         try:
-            with TokenUsageTracker.scoped(workflow="intent", node_name="intent_classifier"):
+            with TokenUsageTracker.scoped(workflow="intent", node_name=node_name):
                 raw_content = self.llm_service.generate_text(
                     user_text=user_prompt,
                     system_prompt=system_prompt,
@@ -221,12 +241,24 @@ class IntentClassifier:
             if intent not in VALID_INTENTS:
                 return None
 
+            candidates = []
+            for item in (parsed.get("candidates") or [])[:3]:
+                if item.get("intent") in VALID_INTENTS:
+                    candidates.append(IntentCandidate(
+                        intent=item["intent"],
+                        confidence=max(0.0, min(float(item.get("confidence", 0.0)), 1.0)),
+                        reason=str(item.get("reason", "")).strip(),
+                    ))
+            if not candidates:
+                candidates = [IntentCandidate(intent=intent, confidence=max(0.0, min(confidence, 1.0)), reason=reason)]
+            candidates.sort(key=lambda item: item.confidence, reverse=True)
             return IntentRecognitionResult(
                 intent=intent,
                 confidence=max(0.0, min(confidence, 1.0)),
                 source="llm",
                 reason=reason,
                 keyword_match=keyword_match,
+                candidates=candidates,
             )
         except Exception:
             return None
