@@ -290,7 +290,13 @@ npm run build
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Waylandite/FitMind&type=Date)](https://star-history.com/#Waylandite/FitMind&Date)
+<p align="center">
+  <a href="https://github.com/Waylandite/FitMind/stargazers">
+    <img src="https://img.shields.io/github/stars/Waylandite/FitMind?style=for-the-badge&logo=github&label=GitHub%20Stars" alt="FitMind GitHub Stars" />
+  </a>
+</p>
+
+> GitHub 调整了 Stargazers 时间线的访问权限，第三方实时 Star History 图表目前无法稳定展示，因此暂时使用 GitHub Stars 徽章。仓库所有者完成授权后，可在 [Star History](https://www.star-history.com/) 查看完整历史曲线。
 
 ---
 
