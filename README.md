@@ -2,10 +2,6 @@
 
 # FitMind
 
-## 意图澄清
-
-当分类结果不够安全（低置信度、候选过于接近、未知意图或多个写入操作冲突）时，FitMind 会先展示最多三个确定性选项，而不是执行写入。澄清状态按会话保存，默认 30 分钟过期、最多两轮；按钮选择和自由文本都会经过服务端校验。客户端可通过 `GET /api/v1/memories/sessions/{session_id}/clarification?user_id={id}` 恢复未完成的澄清。
-
 ### 用自然语言记录训练、饮食与身体状态，让健身数据真正沉淀下来
 
 [![Python](https://img.shields.io/badge/Python-3.11+-2F6690?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -61,11 +57,14 @@ FitMind 当前由两部分组成：
 ```text
 自然语言输入
   → Web 对话界面
-  → ChatService（主编排器、session 管理）
-  → IntentClassifier（关键词 + LLM 双模意图分类）
-  → IntentRouter（意图 → 模块路由）
-  → ServiceChain（健康总结 → 周报趋势 → 训练推荐 → 训练历史 → 饮食 → 身体状态 → 训练记录 → 计划更新）
-  → 草稿确认 → 结构化落库
+  → ChatService（Session、上下文和 SSE 主编排）
+  → IntentClassifier（关键词 + LLM 结构化分类）
+  → Pending Draft Gate（挂起业务草稿优先）
+  → IntentResolutionPolicy（置信度与候选冲突安全闸）
+  → IntentClarification（必要时持久化澄清）
+  → IntentRouter（唯一意图 → 领域服务）
+  → 查询类直接响应 / 写入类草稿确认
+  → MySQL 结构化落库与日志追踪
 ```
 
 ---
@@ -97,20 +96,36 @@ FitMind 当前由两部分组成：
 | 普通 LLM 对话 | 带 session summary 上下文压缩的多轮对话 |
 | 草稿确认机制 | 所有业务写入均经过 `提取 → 草稿 → 确认 → 持久化` 四段流程 |
 | 多轮上下文感知 | pending workflow context 检测，自动识别确认/取消/修正意图 |
+| 持久化意图澄清 | 低置信度、候选接近或多写入冲突时先展示候选；支持按钮、自由文本、取消、过期、两轮失败与刷新恢复 |
+| Session 管理 | 新建、切换和恢复会话，最近对话窗口与历史摘要共同进入模型上下文 |
 | Agent 执行可视化 | 前端实时展示工具调用过程（状态标签、工具名、参数、返回、耗时） |
 | 意图识别日志 | 每次分类结果写入 `intent_recognition_logs`，支撑效果评估和 prompt 迭代 |
 | Token 统计 | 单次 LLM 调用明细（`llm_call_logs`）+ 每轮对话聚合（`chat_turn_token_usage`），旁路异步写入 |
 | SSE 流式响应 | Intent → Session → Agent State → Workflow → Delta → Done 六级事件序列 |
 
----
-
-## 未实现功能
+### Web 产品能力
 
 | 功能 | 说明 |
 |------|------|
-| 澄清追问 | `unknown` 意图已预留路由，当置信度不足时的主动追问逻辑待实现 |
-| 记忆冲突处理 | Agent 提取的长期记忆与用户显式记忆冲突时的协调机制 |
-| 移动端适配 | 当前以桌面端为主 |
+| 登录与注册体验 | 深浅分区首页、登录/注册表单校验和默认测试账号入口 |
+| 对话工作区 | 左右消息布局、Markdown 渲染、SSE 打字机输出、智能自动滚动和思考过程卡片 |
+| 训练历史页 | 日期、部位和动作筛选，分页展示训练记录与确定性统计 |
+| 周报趋势页 | 自然周切换、数据覆盖率、训练/饮食/恢复趋势与部位分布图 |
+| 用户档案 | 编辑身高、体重、目标、训练水平、训练日、伤病和饮食背景 |
+| 自定义记忆 | 维护训练偏好、关注主题、回答风格、饮食偏好和健康限制 |
+
+---
+
+## 当前边界
+
+FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有明确边界：
+
+- 当前通过明文 `user_id` 标识用户，尚未接入 JWT、OAuth2、RBAC 和租户隔离
+- 登录与注册目前是前端体验和接口占位，不是完整账号系统
+- 营养 ReAct 已支持本地食物数据工具，外部权威营养数据库仍以 MCP 扩展点保留
+- 用户自定义记忆已可编辑；Agent 派生记忆的自动提取、冲突合并和人工审阅仍待完善
+- 当前主要面向桌面端，移动端布局、离线能力和消息推送尚未完成
+- 健康建议用于训练与生活方式参考，不替代医疗诊断
 
 ---
 
@@ -122,12 +137,15 @@ FitMind 当前由两部分组成：
 - SSE 流式消费 + 打字机渲染
 - Agent 执行过程时间线可视化（`AgentThoughtProcess`）
 - 草稿确认卡片交互（确认保存 / 取消保存 / 纠正错误）
+- 意图澄清卡片交互（候选选择 / 自由补充 / 取消 / 刷新恢复）
+- 独立训练历史页、周报趋势页、用户档案与自定义记忆面板
 
 ### 后端 Agent
 
 - `Python 3.11+` + `FastAPI` + `Pydantic`
-- 架构：`IntentClassifier → IntentRouter → ServiceChain`
+- 架构：`IntentClassifier → Pending Gate → ResolutionPolicy → IntentRouter → ServiceChain`
 - 意图识别：关键词规则预判 + LLM 结构化分类，双模决策
+- 安全决策：`IntentResolutionPolicy` + 持久化 `IntentClarificationService`
 - 营养链路：LangGraph ReAct 循环 + MCP-ready 工具提供者
 - 查询链路：`ThreadPoolExecutor` 并发查询数据库 + LLM 汇总生成
 - `DeepSeekLLMClient`（OpenAI-compatible SDK）
@@ -135,7 +153,8 @@ FitMind 当前由两部分组成：
 ### 数据层
 
 - `MySQL 8.0+` + `SQLAlchemy 2.0` + `Alembic`
-- 19 张核心表：用户、档案、训练计划/记录/明细、饮食、身体状态、4 张草稿表、对话日志、意图日志、Session/摘要、两层记忆、LLM 调用日志、Token 汇总
+- 20 张核心表：用户与档案、训练计划/记录/明细、饮食、身体状态、4 张草稿表、对话/意图日志、Session/摘要、两层记忆、意图澄清、LLM 调用日志和 Token 汇总
+- 最新迁移：`20260731_000010_add_intent_clarifications`
 
 详见 [docs/database-design.md](docs/database-design.md)
 
@@ -145,7 +164,11 @@ FitMind 当前由两部分组成：
 
 | 日期 | 提交 | 更新内容 |
 |------|------|---------|
-| 2026-07-30 | 当前版本 | 新增自然周周报、跨周确定性统计、趋势图与聊天 SSE 周报链路 |
+| 2026-07-31 | `0990ea6` | 新增持久化意图澄清、安全决策策略、前端澄清卡片和恢复协议 |
+| 2026-07-30 | `44b8e7f` | 新增自然周周报、跨周确定性统计、趋势图与聊天 SSE 周报链路 |
+| 2026-07-30 | `166468c` | 新增训练历史查询、动作部位映射、筛选 API 与独立历史页 |
+| 2026-06-17 | `fd820c6` | 新增用户档案和自定义记忆编辑入口 |
+| 2026-06-17 | `9a1b22c` | 新增当日训练推荐工作流与 Agent 状态可视化 |
 | 2026-06-16 | `49d2e47` | 新增最近健康总结，并发查询训练/饮食/身体状态/计划 |
 | 2026-06-16 | `c3f2b91` | 前端 Agent 执行过程可视化，完善训练记录展示 |
 | 2026-06-15 | `9422e5e` | 新增 LLM token 使用统计（调用明细 + 对话聚合） |
@@ -159,22 +182,27 @@ FitMind 当前由两部分组成：
 
 ## 开发路线
 
-### 近期
+### 下一阶段：生产安全与记忆闭环
 
-- 澄清追问模块（`unknown` 意图路由已预留）
-- 前端展示每轮对话 token 消耗和 session 累计消耗
-- 完善训练重量和次数的标准化字段，为训练容量趋势提供可靠输入
+- 接入 JWT/OAuth2 鉴权、密码哈希、登录态持久化与多用户数据隔离
+- 将用户档案、自定义记忆和 Agent 派生记忆稳定注入对话与推荐上下文
+- 实现记忆冲突检测、版本管理、人工确认和可追溯来源
+- 增加意图识别评估集、Prompt 回归测试和低置信度运营指标
 
-### 中期
+### 第二阶段：训练分析增强
 
-- 构建可解释的健身记忆系统
-- 记忆冲突处理与人工确认
+- 标准化动作、重量、次数、距离和时长字段，计算训练容量与渐进超负荷趋势
+- 增加多周、月度和自定义周期趋势，支持计划完成率与训练负荷分析
+- 前端展示每轮、Session 和用户维度的 Token 与模型成本
+- 将权威食物营养数据源封装为远程 MCP 服务，并完善工具降级策略
 
-### 后续
+### 第三阶段：产品化
 
-- 多周与月度趋势分析
-- 移动端适配
+- 完整移动端适配、PWA、离线草稿和消息提醒
+- 图片识别辅助饮食与器械训练记录
+- 导入可穿戴设备和健康平台数据
 - 支持自定义训练计划周期模板
+- 完善审计、限流、监控、备份和隐私合规能力
 
 ---
 
@@ -208,9 +236,25 @@ cd agent
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env
+# 在 .env 中配置 FITMIND_DATABASE_URL 与 FITMIND_LLM_API_KEY
 alembic upgrade head
 uvicorn fitmind_agent.main:app --reload --port 8000
 ```
+
+### 质量检查
+
+```bash
+cd agent
+pytest -q
+ruff check .
+
+cd ../web
+npm run lint
+npm run build
+```
+
+当前主分支验证基线：后端 `75 passed`，Ruff、ESLint 和 Vite production build 均通过。
 
 ### 当前本地链路
 
@@ -220,6 +264,9 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 - 直连 LLM：`POST /api/v1/llm/chat`
 - 训练历史：`GET /api/v1/workouts/history?user_id=1&start_date=2026-07-24&end_date=2026-07-30`
 - 周报趋势：`GET /api/v1/analytics/weekly?user_id=1&anchor_date=2026-07-30`
+- 用户档案：`GET/PUT /api/v1/profiles/{user_id}`
+- 自定义记忆：`GET/POST/PATCH/DELETE /api/v1/memories/user-defined`
+- 当前澄清：`GET /api/v1/memories/sessions/{session_id}/clarification?user_id=1`
 
 ---
 
@@ -229,7 +276,7 @@ uvicorn fitmind_agent.main:app --reload --port 8000
 |------|------|
 | [docs/agent-architecture.md](docs/agent-architecture.md) | Agent 架构设计，服务链编排、意图系统、执行链路 |
 | [docs/intent-system.md](docs/intent-system.md) | 意图类型、路由模块和实现状态 |
-| [docs/database-design.md](docs/database-design.md) | 面向健身数据的 19 张核心表设计 |
+| [docs/database-design.md](docs/database-design.md) | 面向健身数据的 20 张核心表与迁移设计 |
 | [docs/memory-system-design.md](docs/memory-system-design.md) | 三层记忆体系与 Session 管理 |
 | [docs/nutrition-react-design.md](docs/nutrition-react-design.md) | 饮食记录 ReAct / MCP 工具调用设计 |
 | [docs/nutrition-tools-contract.md](docs/nutrition-tools-contract.md) | 饮食工具调用契约与数据格式 |
