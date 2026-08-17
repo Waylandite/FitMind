@@ -102,12 +102,14 @@ FitMind 当前由两部分组成：
 | 意图识别日志 | 每次分类结果写入 `intent_recognition_logs`，支撑效果评估和 prompt 迭代 |
 | Token 统计 | 单次 LLM 调用明细（`llm_call_logs`）+ 每轮对话聚合（`chat_turn_token_usage`），旁路异步写入 |
 | SSE 流式响应 | Intent → Session → Agent State → Workflow → Delta → Done 六级事件序列 |
+| 真实账号与鉴权 | 邮箱注册、邮箱/用户名登录、JWT Access Token、HttpOnly Refresh Token 轮换、注销与修改密码 |
+| 多用户数据隔离 | 所有业务 API 从当前令牌获取用户身份，资源访问采用 `resource_id + current_user.id` 联合校验 |
 
 ### Web 产品能力
 
 | 功能 | 说明 |
 |------|------|
-| 登录与注册体验 | 深浅分区首页、登录/注册表单校验和默认测试账号入口 |
+| 登录与注册体验 | 深浅分区首页、真实注册/登录、刷新恢复登录态、注销和修改密码 |
 | 对话工作区 | 左右消息布局、Markdown 渲染、SSE 打字机输出、智能自动滚动和思考过程卡片 |
 | 训练历史页 | 日期、部位和动作筛选，分页展示训练记录与确定性统计 |
 | 周报趋势页 | 自然周切换、数据覆盖率、训练/饮食/恢复趋势与部位分布图 |
@@ -118,10 +120,10 @@ FitMind 当前由两部分组成：
 
 ## 当前边界
 
-FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有明确边界：
+FitMind 已具备真实账号系统和基础多用户隔离，但距离完整生产环境仍有明确边界：
 
-- 当前通过明文 `user_id` 标识用户，尚未接入 JWT、OAuth2、RBAC 和租户隔离
-- 登录与注册目前是前端体验和接口占位，不是完整账号系统
+- 当前采用普通用户角色和资源所有权隔离，尚未实现邮箱验证、忘记密码、OAuth2、MFA、RBAC 和管理员后台
+- Access Token 注销后最多仍可存活 15 分钟；修改密码或禁用账号会通过 `auth_version` 立即使旧令牌失效
 - 营养 ReAct 已支持本地食物数据工具，外部权威营养数据库仍以 MCP 扩展点保留
 - 用户自定义记忆已可编辑；Agent 派生记忆的自动提取、冲突合并和人工审阅仍待完善
 - 当前主要面向桌面端，移动端布局、离线能力和消息推送尚未完成
@@ -143,6 +145,7 @@ FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有
 ### 后端 Agent
 
 - `Python 3.11+` + `FastAPI` + `Pydantic`
+- `PyJWT` + `pwdlib[argon2]`：15 分钟 Access Token、30 天 Refresh Token 轮换和 Argon2id 密码哈希
 - 架构：`IntentClassifier → Pending Gate → ResolutionPolicy → IntentRouter → ServiceChain`
 - 意图识别：关键词规则预判 + LLM 结构化分类，双模决策
 - 安全决策：`IntentResolutionPolicy` + 持久化 `IntentClarificationService`
@@ -153,8 +156,8 @@ FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有
 ### 数据层
 
 - `MySQL 8.0+` + `SQLAlchemy 2.0` + `Alembic`
-- 20 张核心表：用户与档案、训练计划/记录/明细、饮食、身体状态、4 张草稿表、对话/意图日志、Session/摘要、两层记忆、意图澄清、LLM 调用日志和 Token 汇总
-- 最新迁移：`20260731_000010_add_intent_clarifications`
+- 21 张核心表：用户与档案、鉴权会话、训练计划/记录/明细、饮食、身体状态、4 张草稿表、对话/意图日志、Session/摘要、两层记忆、意图澄清、LLM 调用日志和 Token 汇总
+- 最新迁移：`20260817_000011_add_auth_sessions`
 
 详见 [docs/database-design.md](docs/database-design.md)
 
@@ -164,6 +167,7 @@ FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有
 
 | 日期 | 提交 | 更新内容 |
 |------|------|---------|
+| 2026-08-17 | 当前版本 | 新增真实账号系统、Refresh Token 安全轮换和全业务多用户隔离 |
 | 2026-07-31 | `0990ea6` | 新增持久化意图澄清、安全决策策略、前端澄清卡片和恢复协议 |
 | 2026-07-30 | `44b8e7f` | 新增自然周周报、跨周确定性统计、趋势图与聊天 SSE 周报链路 |
 | 2026-07-30 | `166468c` | 新增训练历史查询、动作部位映射、筛选 API 与独立历史页 |
@@ -182,12 +186,12 @@ FitMind 已经具备完整的单用户开发链路，但距离生产环境仍有
 
 ## 开发路线
 
-### 下一阶段：生产安全与记忆闭环
+### 下一阶段：记忆闭环与账号完善
 
-- 接入 JWT/OAuth2 鉴权、密码哈希、登录态持久化与多用户数据隔离
 - 将用户档案、自定义记忆和 Agent 派生记忆稳定注入对话与推荐上下文
 - 实现记忆冲突检测、版本管理、人工确认和可追溯来源
 - 增加意图识别评估集、Prompt 回归测试和低置信度运营指标
+- 增加邮箱验证、忘记密码、登录设备管理和可选 MFA
 
 ### 第二阶段：训练分析增强
 
@@ -237,7 +241,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-# 在 .env 中配置 FITMIND_DATABASE_URL 与 FITMIND_LLM_API_KEY
+# 在 .env 中配置数据库、模型密钥和独立的鉴权密钥
+# FITMIND_AUTH_SECRET_KEY 可使用：openssl rand -hex 32
 alembic upgrade head
 uvicorn fitmind_agent.main:app --reload --port 8000
 ```
@@ -250,23 +255,27 @@ pytest -q
 ruff check .
 
 cd ../web
+npm test
 npm run lint
 npm run build
 ```
 
-当前主分支验证基线：后端 `75 passed`，Ruff、ESLint 和 Vite production build 均通过。
+当前验证基线：后端完整 Pytest、Ruff、前端 Vitest、ESLint 和 Vite production build 均通过。
 
 ### 当前本地链路
 
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:8000`
+- 鉴权：`POST /api/v1/auth/register|login|refresh|logout|change-password`、`GET /api/v1/auth/me`
 - 流式对话：`POST /api/v1/chat/stream`
 - 直连 LLM：`POST /api/v1/llm/chat`
-- 训练历史：`GET /api/v1/workouts/history?user_id=1&start_date=2026-07-24&end_date=2026-07-30`
-- 周报趋势：`GET /api/v1/analytics/weekly?user_id=1&anchor_date=2026-07-30`
-- 用户档案：`GET/PUT /api/v1/profiles/{user_id}`
+- 训练历史：`GET /api/v1/workouts/history?start_date=2026-07-24&end_date=2026-07-30`
+- 周报趋势：`GET /api/v1/analytics/weekly?anchor_date=2026-07-30`
+- 用户档案：`GET/PUT /api/v1/profiles/me`
 - 自定义记忆：`GET/POST/PATCH/DELETE /api/v1/memories/user-defined`
-- 当前澄清：`GET /api/v1/memories/sessions/{session_id}/clarification?user_id=1`
+- 当前澄清：`GET /api/v1/memories/sessions/{session_id}/clarification`
+
+除健康检查、元信息、注册、登录和刷新外，API 均需携带 `Authorization: Bearer <access_token>`。Refresh Token 只由浏览器通过 HttpOnly Cookie 发送，不暴露给 JavaScript。
 
 ---
 
@@ -276,7 +285,7 @@ npm run build
 |------|------|
 | [docs/agent-architecture.md](docs/agent-architecture.md) | Agent 架构设计，服务链编排、意图系统、执行链路 |
 | [docs/intent-system.md](docs/intent-system.md) | 意图类型、路由模块和实现状态 |
-| [docs/database-design.md](docs/database-design.md) | 面向健身数据的 20 张核心表与迁移设计 |
+| [docs/database-design.md](docs/database-design.md) | 面向健身数据与安全会话的 21 张核心表设计 |
 | [docs/memory-system-design.md](docs/memory-system-design.md) | 三层记忆体系与 Session 管理 |
 | [docs/nutrition-react-design.md](docs/nutrition-react-design.md) | 饮食记录 ReAct / MCP 工具调用设计 |
 | [docs/nutrition-tools-contract.md](docs/nutrition-tools-contract.md) | 饮食工具调用契约与数据格式 |

@@ -41,8 +41,10 @@
 ## 4. API
 
 ```http
-GET /api/v1/analytics/weekly?user_id=1&anchor_date=2026-07-30
+GET /api/v1/analytics/weekly?anchor_date=2026-07-30
 ```
+
+接口通过 Bearer Access Token 识别当前用户，不接受客户端传入 `user_id`。
 
 响应包含：
 

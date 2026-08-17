@@ -10,9 +10,10 @@ from fastapi.responses import StreamingResponse
 
 from sqlalchemy.orm import Session
 
+from fitmind_agent.api.dependencies import CurrentUser
 from fitmind_agent.core.llm import LLMConfigurationError
 from fitmind_agent.db.session import get_db_session
-from fitmind_agent.schemas.chat import ChatRequest, ChatResponse
+from fitmind_agent.schemas.chat import ChatRequest, ChatResponse, PublicChatRequest
 from fitmind_agent.services.chat_service import ChatService
 from fitmind_agent.services.token_usage_tracker import TokenUsageContext
 from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
@@ -21,29 +22,37 @@ router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
+def _authenticated_command(payload: PublicChatRequest, user_id: int) -> ChatRequest:
+    return ChatRequest(**payload.model_dump(), user_id=user_id, persist_log=True)
+
+
 @router.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, db: Session = Depends(get_db_session)) -> ChatResponse:
+def chat(
+    payload: PublicChatRequest,
+    current_user: CurrentUser,
+    db: Session = Depends(get_db_session),
+) -> ChatResponse:
+    command = _authenticated_command(payload, current_user.id)
     try:
         service = ChatService(db=db)
-        session_id = service._resolve_session_id(payload)
-        if payload.persist_log and payload.user_id is not None:
-            session_id = session_id or service._ensure_active_session(payload)
+        session_id = service._resolve_session_id(command)
+        session_id = session_id or service._ensure_active_session(command)
         request_id = uuid4().hex
         with TokenUsageTracker.context(
             TokenUsageContext(
                 request_id=request_id,
-                user_id=payload.user_id,
-                thread_id=payload.thread_id,
+                user_id=command.user_id,
+                thread_id=command.thread_id,
                 session_id=session_id,
                 workflow="chat",
                 node_name="chat_sync",
             )
         ):
-            response = service.handle(payload)
+            response = service.handle(command)
         TokenUsageTracker.aggregate_turn(
             request_id=request_id,
-            user_id=payload.user_id,
-            thread_id=payload.thread_id,
+            user_id=command.user_id,
+            thread_id=command.thread_id,
             session_id=response.session_id or session_id,
             intent_type=response.intent,
         )
@@ -55,12 +64,16 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db_session)) -> ChatRes
 
 
 @router.post("/chat/stream")
-def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> StreamingResponse:
+def chat_stream(
+    payload: PublicChatRequest,
+    current_user: CurrentUser,
+    db: Session = Depends(get_db_session),
+) -> StreamingResponse:
+    command = _authenticated_command(payload, current_user.id)
     try:
         service = ChatService(db=db)
-        session_id = service._resolve_session_id(payload)
-        if payload.persist_log and payload.user_id is not None:
-            session_id = session_id or service._ensure_active_session(payload)
+        session_id = service._resolve_session_id(command)
+        session_id = session_id or service._ensure_active_session(command)
         request_id = uuid4().hex
 
         def event_stream() -> Iterator[str]:
@@ -70,14 +83,14 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
                 with TokenUsageTracker.context(
                     TokenUsageContext(
                         request_id=request_id,
-                        user_id=payload.user_id,
-                        thread_id=payload.thread_id,
+                        user_id=command.user_id,
+                        thread_id=command.thread_id,
                         session_id=stream_session_id,
                         workflow="chat",
                         node_name="chat_stream",
                     )
                 ):
-                    for event in service.stream_handle(payload):
+                    for event in service.stream_handle(command):
                         try:
                             if event.startswith("data: "):
                                 event_payload = json.loads(event[6:].strip())
@@ -89,15 +102,15 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
             except Exception as exc:  # pragma: no cover - defensive stream wrapper
                 logger.exception("Chat stream generator failed.")
                 reply = f"对话流处理失败：{exc}"
-                if payload.persist_log and payload.user_id is not None:
+                if command.persist_log and command.user_id is not None:
                     try:
                         stream_session_id = (
-                            service._resolve_session_id(payload)
+                            service._resolve_session_id(command)
                             or stream_session_id
-                            or service._ensure_active_session(payload)
+                            or service._ensure_active_session(command)
                         )
                         service._persist_conversation_logs(
-                            payload=payload,
+                            payload=command,
                             reply=reply,
                             session_id=stream_session_id,
                             db_intent_type="query",
@@ -108,8 +121,8 @@ def chat_stream(payload: ChatRequest, db: Session = Depends(get_db_session)) -> 
             finally:
                 TokenUsageTracker.aggregate_turn(
                     request_id=request_id,
-                    user_id=payload.user_id,
-                    thread_id=payload.thread_id,
+                    user_id=command.user_id,
+                    thread_id=command.thread_id,
                     session_id=stream_session_id,
                     intent_type=final_intent,
                 )

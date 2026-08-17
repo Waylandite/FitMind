@@ -20,6 +20,7 @@ from fitmind_agent.services.today_workout_recommendation_service import (
     TodayWorkoutRecommendationResult,
 )
 from fitmind_agent.services.chat_service import ChatService
+from fitmind_agent.services.auth_service import AuthService
 from fitmind_agent.services.intent_clarification_service import IntentClarificationService
 
 
@@ -152,8 +153,10 @@ def test_integration_active_clarification_http_protocol():
     )
     app = create_app()
     app.dependency_overrides[get_db_session] = override_session(db)
+    token = AuthService(db).create_access_token(user)
     response = TestClient(app).get(
-        f"/api/v1/memories/sessions/{chat.id}/clarification?user_id={user.id}"
+        f"/api/v1/memories/sessions/{chat.id}/clarification",
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200 and response.json()["type"] == "clarification"
 
@@ -162,9 +165,13 @@ def test_integration_active_clarification_http_empty_protocol():
     db, user, chat = setup()
     app = create_app()
     app.dependency_overrides[get_db_session] = override_session(db)
+    token = AuthService(db).create_access_token(user)
     assert (
         TestClient(app)
-        .get(f"/api/v1/memories/sessions/{chat.id}/clarification?user_id={user.id}")
+        .get(
+            f"/api/v1/memories/sessions/{chat.id}/clarification",
+            headers={"Authorization": f"Bearer {token}"},
+        )
         .json()
         is None
     )

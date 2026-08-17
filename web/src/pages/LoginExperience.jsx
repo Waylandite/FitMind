@@ -1,24 +1,22 @@
 import { useState } from 'react'
 
+import useAuth from '../auth/useAuth'
+
 const quickNotes = [
   { label: '训练', value: '对话即记录，减少切换成本' },
   { label: '饮食', value: '补一条早餐或补剂只要一句话' },
   { label: '恢复', value: '睡眠、疲劳、体重统一进入记忆' },
 ]
 
-const defaultCredentials = {
-  identifiers: ['fitmind', 'demo', 'demo@fitmind.ai'],
-  password: '123456',
-}
-
 const fieldBaseClass =
   'w-full rounded-[1.15rem] border border-[var(--line)] bg-white px-4 py-3.5 text-[15px] text-[var(--text)] outline-none transition-all duration-300 placeholder:text-[var(--text-faint)] focus:border-[rgba(79,140,255,0.38)] focus:ring-4 focus:ring-[rgba(79,140,255,0.12)]'
 
-function LoginExperience({ onLoginSuccess }) {
+function LoginExperience() {
+  const { login, register } = useAuth()
   const [mode, setMode] = useState('login')
   const [loginForm, setLoginForm] = useState({
-    identifier: 'fitmind',
-    password: '123456',
+    identifier: '',
+    password: '',
   })
   const [registerForm, setRegisterForm] = useState({
     email: '',
@@ -54,8 +52,8 @@ function LoginExperience({ onLoginSuccess }) {
 
     if (!values.password) {
       errors.password = '请输入密码'
-    } else if (values.password.length < 6) {
-      errors.password = '密码至少 6 位'
+    } else if (values.password.length < 8) {
+      errors.password = '密码至少 8 位'
     }
 
     return errors
@@ -80,58 +78,11 @@ function LoginExperience({ onLoginSuccess }) {
 
     if (!values.password) {
       errors.password = '请输入密码'
-    } else if (values.password.length < 6) {
-      errors.password = '密码至少 6 位'
+    } else if (values.password.length < 8) {
+      errors.password = '密码至少 8 位'
     }
 
     return errors
-  }
-
-  const fakeLoginApi = async (payload) => {
-    await new Promise((resolve) => window.setTimeout(resolve, 650))
-
-    const normalizedIdentifier = payload.identifier.trim().toLowerCase()
-    const isAllowedUser = defaultCredentials.identifiers.includes(normalizedIdentifier)
-
-    if (!isAllowedUser || payload.password !== defaultCredentials.password) {
-      return {
-        ok: false,
-        message: '默认账号: fitmind / 默认密码: 123456',
-      }
-    }
-
-    return {
-      ok: true,
-      message: '登录成功，正在进入工作台...',
-      user: {
-        userId: 1,
-        name: normalizedIdentifier === 'demo@fitmind.ai' ? 'FitMind Demo' : 'FitMind',
-        identifier: payload.identifier,
-      },
-    }
-  }
-
-  const fakeRegisterApi = async (payload) => {
-    await new Promise((resolve) => window.setTimeout(resolve, 900))
-
-    if (payload.email.toLowerCase().endsWith('@example.com')) {
-      return {
-        ok: false,
-        message: '请使用真实邮箱',
-      }
-    }
-
-    if (payload.username.toLowerCase() === 'admin') {
-      return {
-        ok: false,
-        message: '用户名已被占用',
-      }
-    }
-
-    return {
-      ok: true,
-      message: '注册成功，请直接使用默认账号体验',
-    }
   }
 
   const handleLoginSubmit = async (event) => {
@@ -145,17 +96,16 @@ function LoginExperience({ onLoginSuccess }) {
     }
 
     setSubmitting((current) => ({ ...current, login: true }))
-    const response = await fakeLoginApi(loginForm)
-    setSubmitting((current) => ({ ...current, login: false }))
-    setLoginStatus({
-      type: response.ok ? 'success' : 'error',
-      message: response.message,
-    })
-
-    if (response.ok) {
-      window.setTimeout(() => {
-        onLoginSuccess(response.user)
-      }, 320)
+    try {
+      await login(loginForm)
+      setLoginStatus({ type: 'success', message: '登录成功，正在进入工作台...' })
+    } catch (error) {
+      setLoginStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : '登录失败，请稍后重试',
+      })
+    } finally {
+      setSubmitting((current) => ({ ...current, login: false }))
     }
   }
 
@@ -170,15 +120,16 @@ function LoginExperience({ onLoginSuccess }) {
     }
 
     setSubmitting((current) => ({ ...current, register: true }))
-    const response = await fakeRegisterApi(registerForm)
-    setSubmitting((current) => ({ ...current, register: false }))
-    setRegisterStatus({
-      type: response.ok ? 'success' : 'error',
-      message: response.message,
-    })
-
-    if (response.ok) {
-      setMode('login')
+    try {
+      await register(registerForm)
+      setRegisterStatus({ type: 'success', message: '账号创建成功，正在进入工作台...' })
+    } catch (error) {
+      setRegisterStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : '注册失败，请稍后重试',
+      })
+    } finally {
+      setSubmitting((current) => ({ ...current, register: false }))
     }
   }
 
@@ -308,17 +259,12 @@ function LoginExperience({ onLoginSuccess }) {
                   <label className="block">
                     <div className="mb-2 flex items-center justify-between gap-4">
                       <span className="text-sm font-medium text-[var(--text-soft)]">密码</span>
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-[var(--text-faint)] transition hover:text-[var(--accent)]"
-                      >
-                        忘记密码
-                      </button>
+                      <span className="text-xs font-medium text-[var(--text-faint)]">安全登录</span>
                     </div>
                     <input
                       type="password"
                       name="password"
-                      placeholder="输入默认密码 123456"
+                      placeholder="输入密码"
                       value={loginForm.password}
                       onChange={handleLoginInput}
                       className={fieldBaseClass}
@@ -328,8 +274,7 @@ function LoginExperience({ onLoginSuccess }) {
                 </div>
 
                 <div className="rounded-[1.3rem] border border-[var(--line)] bg-[rgba(79,140,255,0.05)] px-4 py-3 text-sm leading-6 text-[var(--text-soft)]">
-                  默认账号 <span className="font-mono text-[var(--text)]">fitmind</span>，默认密码{' '}
-                  <span className="font-mono text-[var(--text)]">123456</span>
+                  使用已注册的邮箱或用户名安全登录。
                 </div>
 
                 <div className="mt-4 min-h-11">
@@ -399,7 +344,7 @@ function LoginExperience({ onLoginSuccess }) {
                     <input
                       type="password"
                       name="password"
-                      placeholder="至少 6 位"
+                      placeholder="至少 8 位"
                       value={registerForm.password}
                       onChange={handleRegisterInput}
                       className={fieldBaseClass}

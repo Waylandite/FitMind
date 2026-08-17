@@ -26,9 +26,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-
-const apiBaseUrl =
-  import.meta.env.VITE_AGENT_BASE_URL?.replace(/\/$/, '') ?? 'http://127.0.0.1:8000/api/v1'
+import { apiFetch } from '../lib/apiClient'
 
 const chartColors = {
   current: '#4f8cff',
@@ -61,12 +59,11 @@ function formatChange(change, suffix = '') {
   return `较上周 ${sign}${Number(change.delta).toFixed(Number.isInteger(change.delta) ? 0 : 1)}${suffix}`
 }
 
-async function requestWeeklyAnalytics(userId, anchorDate, signal) {
+async function requestWeeklyAnalytics(anchorDate, signal) {
   const query = new URLSearchParams({
-    user_id: String(userId),
     anchor_date: anchorDate,
   })
-  const response = await fetch(`${apiBaseUrl}/analytics/weekly?${query.toString()}`, { signal })
+  const response = await apiFetch(`/analytics/weekly?${query.toString()}`, { signal })
   const payload = await response.json()
   if (!response.ok) throw new Error(payload.detail ?? `请求失败: ${response.status}`)
   return payload
@@ -139,8 +136,7 @@ function WeeklySkeleton() {
   )
 }
 
-function WeeklyTrends({ session, onBackToChat }) {
-  const userId = session.userId ?? 1
+function WeeklyTrends({ onBackToChat }) {
   const [anchorDate, setAnchorDate] = useState(() => toInputDate(new Date()))
   const [analytics, setAnalytics] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -148,7 +144,7 @@ function WeeklyTrends({ session, onBackToChat }) {
 
   useEffect(() => {
     const controller = new AbortController()
-    requestWeeklyAnalytics(userId, anchorDate, controller.signal)
+    requestWeeklyAnalytics(anchorDate, controller.signal)
       .then(setAnalytics)
       .catch((requestError) => {
         if (requestError.name !== 'AbortError') {
@@ -160,7 +156,7 @@ function WeeklyTrends({ session, onBackToChat }) {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [anchorDate, userId])
+  }, [anchorDate])
 
   const selectAnchorDate = (nextDate) => {
     setLoading(true)

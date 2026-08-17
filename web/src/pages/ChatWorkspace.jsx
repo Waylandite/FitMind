@@ -4,6 +4,8 @@ import { DayPicker } from 'react-day-picker'
 import AgentThoughtProcess from '../components/AgentThoughtProcess'
 import MarkdownMessage from '../components/MarkdownMessage'
 import useSmartAutoScroll from '../hooks/useSmartAutoScroll'
+import { apiFetch } from '../lib/apiClient'
+import useAuth from '../auth/useAuth'
 
 const quickPrompts = [
   '记录今天的腿部训练和有氧',
@@ -12,9 +14,6 @@ const quickPrompts = [
   '回顾最近 7 天的体重变化',
   '总结这周恢复情况和睡眠质量',
 ]
-
-const apiBaseUrl =
-  import.meta.env.VITE_AGENT_BASE_URL?.replace(/\/$/, '') ?? 'http://127.0.0.1:8000/api/v1'
 
 const weekdayOptions = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const genderOptions = [
@@ -624,13 +623,12 @@ function groupSessionsByDate(sessions) {
 }
 
 async function createSessionRecordForUser(userId) {
-  const response = await fetch(`${apiBaseUrl}/memories/sessions`, {
+  const response = await apiFetch('/memories/sessions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      user_id: userId,
       thread_id: buildThreadId(userId),
       title: '新的会话',
       status: 'active',
@@ -1050,6 +1048,7 @@ function MessageRow({ message, sending, onDraftAction, onClarificationAction, no
 }
 
 function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends }) {
+  const { changePassword } = useAuth()
   const [messages, setMessages] = useState([])
   const [sessions, setSessions] = useState([])
   const [activeSessionId, setActiveSessionId] = useState(null)
@@ -1080,6 +1079,14 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
   const [memorySaving, setMemorySaving] = useState(false)
   const [memoryError, setMemoryError] = useState('')
   const [memorySuccess, setMemorySuccess] = useState('')
+  const [passwordSettingsOpen, setPasswordSettingsOpen] = useState(false)
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    new_password: '',
+    confirm_password: '',
+  })
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
   const [thinkingNow, setThinkingNow] = useState(0)
   const {
     viewportRef,
@@ -1326,7 +1333,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     setMemorySuccess('')
 
     try {
-      const response = await fetch(`${apiBaseUrl}/memories/user-defined?user_id=${userId}&status=active`)
+      const response = await apiFetch('/memories/user-defined?status=active')
       if (!response.ok) {
         throw new Error(`自定义记忆加载失败: ${response.status}`)
       }
@@ -1447,7 +1454,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     setProfileSuccess('')
 
     try {
-      const response = await fetch(`${apiBaseUrl}/profiles/${userId}`, {
+      const response = await apiFetch('/profiles/me', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1496,7 +1503,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
 
           if (nextValue && existingRecord) {
             requests.push(
-              fetch(`${apiBaseUrl}/memories/user-defined/${existingRecord.id}`, {
+              apiFetch(`/memories/user-defined/${existingRecord.id}`, {
                 method: 'PATCH',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1513,13 +1520,12 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
 
           if (nextValue && !existingRecord) {
             requests.push(
-              fetch(`${apiBaseUrl}/memories/user-defined`, {
+              apiFetch('/memories/user-defined', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  user_id: userId,
                   memory_key: field.key,
                   memory_category: category.id,
                   memory_value: nextValue,
@@ -1534,7 +1540,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
 
           if (!nextValue && existingRecord) {
             requests.push(
-              fetch(`${apiBaseUrl}/memories/user-defined/${existingRecord.id}`, {
+              apiFetch(`/memories/user-defined/${existingRecord.id}`, {
                 method: 'PATCH',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1579,7 +1585,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
       setProfileSuccess('')
 
       try {
-        const response = await fetch(`${apiBaseUrl}/profiles/${userId}`)
+        const response = await apiFetch('/profiles/me')
         if (!response.ok) {
           throw new Error(`个人信息加载失败: ${response.status}`)
         }
@@ -1624,7 +1630,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
       setMemorySuccess('')
 
       try {
-        const response = await fetch(`${apiBaseUrl}/memories/user-defined?user_id=${userId}&status=active`)
+        const response = await apiFetch('/memories/user-defined?status=active')
         if (!response.ok) {
           throw new Error(`自定义记忆加载失败: ${response.status}`)
         }
@@ -1663,7 +1669,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     const bootstrap = async () => {
       setLoadingSessions(true)
       try {
-        const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
+        const response = await apiFetch('/memories/sessions')
         if (!response.ok) {
           throw new Error(`会话列表请求失败: ${response.status}`)
         }
@@ -1714,8 +1720,8 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
       setErrorMessage('')
       try {
         const [response, clarificationResponse] = await Promise.all([
-          fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/messages`),
-          fetch(`${apiBaseUrl}/memories/sessions/${activeSessionId}/clarification?user_id=${userId}`),
+          apiFetch(`/memories/sessions/${activeSessionId}/messages`),
+          apiFetch(`/memories/sessions/${activeSessionId}/clarification`),
         ])
         if (!response.ok) {
           throw new Error(`会话历史请求失败: ${response.status}`)
@@ -1765,7 +1771,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
   }, [activeSessionId, userId])
 
   const refreshSessions = async (nextActiveId = activeSessionId) => {
-    const response = await fetch(`${apiBaseUrl}/memories/sessions?user_id=${userId}`)
+    const response = await apiFetch('/memories/sessions')
     if (!response.ok) {
       throw new Error(`刷新会话失败: ${response.status}`)
     }
@@ -1866,16 +1872,14 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
     resumeAutoScroll('auto')
 
     try {
-      const response = await fetch(`${apiBaseUrl}/chat/stream`, {
+      const response = await apiFetch('/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: userId,
           thread_id: activeSession.thread_id,
           message: text,
-          persist_log: true,
           clarification: clarificationInput,
         }),
       })
@@ -2168,6 +2172,31 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
       closeMemorySettingsPanel()
       return
     }
+    setPasswordSettingsOpen(false)
+  }
+
+  const handlePasswordChange = async (event) => {
+    event.preventDefault()
+    setPasswordError('')
+    if (passwordForm.new_password.length < 8) {
+      setPasswordError('新密码至少需要 8 位')
+      return
+    }
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      setPasswordError('两次输入的新密码不一致')
+      return
+    }
+
+    setPasswordSaving(true)
+    try {
+      await changePassword({
+        current_password: passwordForm.current_password,
+        new_password: passwordForm.new_password,
+      })
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : '密码修改失败')
+      setPasswordSaving(false)
+    }
   }
 
   return (
@@ -2230,6 +2259,17 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setProfileOpen(false)
+                  setPasswordError('')
+                  setPasswordSettingsOpen(true)
+                }}
+                className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--text)] transition-all duration-300 hover:bg-[rgba(52,74,140,0.05)]"
+              >
+                修改密码
+              </button>
+              <button
+                type="button"
                 onClick={onLogout}
                 className="block w-full rounded-[1rem] px-3 py-3 text-left text-sm font-medium text-[var(--danger)] transition-all duration-300 hover:bg-[rgba(215,99,99,0.06)]"
               >
@@ -2242,7 +2282,7 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
 
       <div
         className={`fixed inset-0 z-30 bg-[rgba(28,34,51,0.14)] backdrop-blur-[2px] transition-all duration-300 ${
-          sidebarOpen || profileSettingsOpen || memorySettingsOpen || profileOpen
+          sidebarOpen || profileSettingsOpen || memorySettingsOpen || passwordSettingsOpen || profileOpen
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'
         }`}
@@ -2319,6 +2359,55 @@ function ChatWorkspace({ session, onLogout, onOpenHistory, onOpenWeeklyTrends })
           </div>
         </div>
       </aside>
+
+      <div
+        className={`fixed inset-0 z-50 flex items-center justify-center px-4 transition-all duration-300 ${
+          passwordSettingsOpen
+            ? 'pointer-events-auto opacity-100'
+            : 'pointer-events-none opacity-0'
+        }`}
+      >
+        <form
+          onSubmit={handlePasswordChange}
+          className={`w-full max-w-md rounded-[2rem] border border-white/80 bg-[rgba(255,255,255,0.94)] p-6 shadow-[0_28px_90px_rgba(63,76,119,0.2)] backdrop-blur-2xl transition-all duration-300 ${
+            passwordSettingsOpen ? 'translate-y-0 scale-100' : 'translate-y-4 scale-95'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-faint)]">Security</p>
+              <h3 className="mt-2 font-display text-[2rem] leading-none text-[var(--text)]">修改密码</h3>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-soft)]">修改后所有设备都需要重新登录。</p>
+            </div>
+            <button type="button" onClick={() => setPasswordSettingsOpen(false)} className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-faint)] hover:bg-[rgba(46,56,87,0.06)]">×</button>
+          </div>
+          <div className="mt-6 space-y-4">
+            {[
+              ['current_password', '当前密码'],
+              ['new_password', '新密码'],
+              ['confirm_password', '确认新密码'],
+            ].map(([name, label]) => (
+              <label key={name} className="block">
+                <span className="mb-2 block text-sm font-medium text-[var(--text-soft)]">{label}</span>
+                <input
+                  type="password"
+                  value={passwordForm[name]}
+                  onChange={(event) => {
+                    setPasswordForm((current) => ({ ...current, [name]: event.target.value }))
+                    setPasswordError('')
+                  }}
+                  autoComplete={name === 'current_password' ? 'current-password' : 'new-password'}
+                  className="w-full rounded-[1rem] border border-[rgba(62,82,130,0.1)] bg-white px-4 py-3 text-sm text-[var(--text)] outline-none focus:border-[rgba(79,140,255,0.4)] focus:ring-4 focus:ring-[rgba(79,140,255,0.1)]"
+                />
+              </label>
+            ))}
+          </div>
+          {passwordError ? <p className="mt-4 rounded-[1rem] bg-[rgba(215,99,99,0.08)] px-4 py-3 text-sm text-[var(--danger)]">{passwordError}</p> : null}
+          <button type="submit" disabled={passwordSaving || Object.values(passwordForm).some((value) => !value)} className="mt-6 w-full rounded-full bg-[linear-gradient(135deg,#5f89ff,#76d0b5)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(98,134,255,0.2)] disabled:cursor-not-allowed disabled:opacity-50">
+            {passwordSaving ? '修改中...' : '确认修改密码'}
+          </button>
+        </form>
+      </div>
 
       <aside
         className={`fixed inset-y-0 right-0 z-40 w-[min(100vw,44rem)] transform bg-[rgba(255,255,255,0.9)] px-3 py-3 shadow-[-14px_0_50px_rgba(82,98,141,0.08)] backdrop-blur-2xl transition-all duration-300 ease-in-out sm:px-4 sm:py-4 ${

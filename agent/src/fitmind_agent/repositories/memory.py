@@ -36,6 +36,14 @@ class UserDefinedMemoryRepository:
     def get_by_id(self, memory_id: int) -> UserDefinedMemory | None:
         return self.session.get(UserDefinedMemory, memory_id)
 
+    def get_by_id_for_user(self, memory_id: int, user_id: int) -> UserDefinedMemory | None:
+        return self.session.scalar(
+            select(UserDefinedMemory).where(
+                UserDefinedMemory.id == memory_id,
+                UserDefinedMemory.user_id == user_id,
+            )
+        )
+
     def list_by_user(self, user_id: int, status: str | None = None) -> list[UserDefinedMemory]:
         stmt = select(UserDefinedMemory).where(UserDefinedMemory.user_id == user_id)
         if status:
@@ -70,6 +78,14 @@ class AgentDerivedMemoryRepository:
     def get_by_id(self, memory_id: int) -> AgentDerivedMemory | None:
         return self.session.get(AgentDerivedMemory, memory_id)
 
+    def get_by_id_for_user(self, memory_id: int, user_id: int) -> AgentDerivedMemory | None:
+        return self.session.scalar(
+            select(AgentDerivedMemory).where(
+                AgentDerivedMemory.id == memory_id,
+                AgentDerivedMemory.user_id == user_id,
+            )
+        )
+
     def list_by_user(self, user_id: int, status: str | None = None) -> list[AgentDerivedMemory]:
         stmt = select(AgentDerivedMemory).where(AgentDerivedMemory.user_id == user_id)
         if status:
@@ -103,6 +119,14 @@ class ChatSessionRepository:
 
     def get_by_id(self, session_id: int) -> ChatSession | None:
         return self.session.get(ChatSession, session_id)
+
+    def get_by_id_for_user(self, session_id: int, user_id: int) -> ChatSession | None:
+        return self.session.scalar(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == user_id,
+            )
+        )
 
     def list_by_user(self, user_id: int, status: str | None = None) -> list[ChatSession]:
         stmt = select(ChatSession).where(ChatSession.user_id == user_id)
@@ -161,11 +185,25 @@ class ChatSessionSummaryRepository:
     def get_by_id(self, summary_id: int) -> ChatSessionSummary | None:
         return self.session.get(ChatSessionSummary, summary_id)
 
-    def list_by_session(self, session_id: int) -> list[ChatSessionSummary]:
+    def get_by_id_for_user(self, summary_id: int, user_id: int) -> ChatSessionSummary | None:
+        return self.session.scalar(
+            select(ChatSessionSummary).where(
+                ChatSessionSummary.id == summary_id,
+                ChatSessionSummary.user_id == user_id,
+            )
+        )
+
+    def list_by_session(
+        self, session_id: int, user_id: int | None = None
+    ) -> list[ChatSessionSummary]:
         stmt = (
             select(ChatSessionSummary)
             .where(ChatSessionSummary.session_id == session_id)
-            .order_by(ChatSessionSummary.summary_version.desc(), ChatSessionSummary.id.desc())
+        )
+        if user_id is not None:
+            stmt = stmt.where(ChatSessionSummary.user_id == user_id)
+        stmt = stmt.order_by(
+            ChatSessionSummary.summary_version.desc(), ChatSessionSummary.id.desc()
         )
         return list(self.session.scalars(stmt))
 
@@ -215,6 +253,19 @@ class ConversationLogRepository:
         stmt = (
             select(ConversationLog)
             .where(ConversationLog.session_id == session_id)
+            .order_by(ConversationLog.id.asc())
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_all_by_session_for_user(
+        self, session_id: int, user_id: int
+    ) -> list[ConversationLog]:
+        stmt = (
+            select(ConversationLog)
+            .where(
+                ConversationLog.session_id == session_id,
+                ConversationLog.user_id == user_id,
+            )
             .order_by(ConversationLog.id.asc())
         )
         return list(self.session.scalars(stmt))

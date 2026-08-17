@@ -7,6 +7,7 @@ from fastapi import Query
 
 from sqlalchemy.orm import Session
 
+from fitmind_agent.api.dependencies import CurrentUser
 from fitmind_agent.db.session import get_db_session
 from fitmind_agent.schemas.workout_history import MuscleGroup
 from fitmind_agent.schemas.workout_history import WorkoutHistoryResponse
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/workouts", tags=["workouts"])
 
 @router.get("/history", response_model=WorkoutHistoryResponse)
 def get_workout_history(
-    user_id: int,
+    current_user: CurrentUser,
     start_date: date | None = None,
     end_date: date | None = None,
     muscle_group: MuscleGroup | None = None,
@@ -36,7 +37,7 @@ def get_workout_history(
             exercise_keyword=exercise_keyword,
         )
         return service.query_history(
-            user_id=user_id,
+            user_id=current_user.id,
             filters=filters,
             page=page,
             page_size=page_size,

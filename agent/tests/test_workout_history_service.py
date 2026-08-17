@@ -14,6 +14,7 @@ from fitmind_agent.repositories.workout import WorkoutRecordRepository
 from fitmind_agent.schemas.intent import IntentRecognitionResult
 from fitmind_agent.services.intent_router import IntentRouter
 from fitmind_agent.services.workout_history_service import WorkoutHistoryService
+from fitmind_agent.services.auth_service import AuthService
 
 
 class ScriptedHistoryLLM:
@@ -114,6 +115,12 @@ def seed_training_history(session: Session) -> int:
     return user.id
 
 
+def auth_headers(session: Session, user_id: int) -> dict[str, str]:
+    user = session.get(User, user_id)
+    assert user is not None
+    return {"Authorization": f"Bearer {AuthService(session).create_access_token(user)}"}
+
+
 def test_workout_history_route_is_ready() -> None:
     route = IntentRouter().route(
         IntentRecognitionResult(
@@ -131,13 +138,14 @@ def test_workout_history_route_is_ready() -> None:
 def test_history_api_filters_by_muscle_and_exercise() -> None:
     client, session = build_client()
     user_id = seed_training_history(session)
+    headers = auth_headers(session, user_id)
     today = date.today().isoformat()
     start_date = (date.today() - timedelta(days=6)).isoformat()
 
     chest_response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": start_date,
             "end_date": today,
             "muscle_group": "chest",
@@ -150,8 +158,8 @@ def test_history_api_filters_by_muscle_and_exercise() -> None:
 
     exercise_response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": start_date,
             "end_date": today,
             "exercise_keyword": "划船",
@@ -164,8 +172,8 @@ def test_history_api_filters_by_muscle_and_exercise() -> None:
 
     other_response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": start_date,
             "end_date": today,
             "muscle_group": "other",
@@ -176,8 +184,8 @@ def test_history_api_filters_by_muscle_and_exercise() -> None:
 
     paged_response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": start_date,
             "end_date": today,
             "page": 2,
@@ -194,8 +202,8 @@ def test_history_api_filters_by_muscle_and_exercise() -> None:
 
     empty_response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": start_date,
             "end_date": today,
             "exercise_keyword": "不存在的动作",
@@ -208,11 +216,12 @@ def test_history_api_filters_by_muscle_and_exercise() -> None:
 def test_history_api_rejects_ranges_over_ninety_days() -> None:
     client, session = build_client()
     user_id = seed_training_history(session)
+    headers = auth_headers(session, user_id)
 
     response = client.get(
         "/api/v1/workouts/history",
+        headers=headers,
         params={
-            "user_id": user_id,
             "start_date": (date.today() - timedelta(days=90)).isoformat(),
             "end_date": date.today().isoformat(),
         },

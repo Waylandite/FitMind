@@ -11,6 +11,7 @@ from fitmind_agent.api.app import create_app
 from fitmind_agent.db.models import Base
 from fitmind_agent.db.models import User
 from fitmind_agent.db.session import get_db_session
+from fitmind_agent.services.auth_service import AuthService
 
 
 def build_client() -> tuple[TestClient, Session]:
@@ -42,18 +43,25 @@ def create_user(session: Session) -> User:
     return user
 
 
+def auth_headers(session: Session, user: User) -> dict[str, str]:
+    token = AuthService(session).create_access_token(user)
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_profile_route_creates_default_before_upsert() -> None:
     client, session = build_client()
     user = create_user(session)
 
-    empty_response = client.get(f"/api/v1/profiles/{user.id}")
+    headers = auth_headers(session, user)
+    empty_response = client.get("/api/v1/profiles/me", headers=headers)
     assert empty_response.status_code == 200
     default_profile = empty_response.json()
     assert default_profile["user_id"] == user.id
     assert default_profile["gender"] is None
 
     create_response = client.put(
-        f"/api/v1/profiles/{user.id}",
+        "/api/v1/profiles/me",
+        headers=headers,
         json={
             "gender": "男",
             "birth_date": "1995-05-20",
@@ -76,7 +84,8 @@ def test_profile_route_creates_default_before_upsert() -> None:
     assert created["preferred_training_days"] == "周一,周三,周五"
 
     update_response = client.put(
-        f"/api/v1/profiles/{user.id}",
+        "/api/v1/profiles/me",
+        headers=headers,
         json={
             "gender": "男",
             "birth_date": "1995-05-20",
@@ -114,11 +123,12 @@ def test_profile_route_creates_default_before_upsert() -> None:
 def test_user_defined_memory_can_be_archived_via_patch() -> None:
     client, session = build_client()
     user = create_user(session)
+    headers = auth_headers(session, user)
 
     create_response = client.post(
         "/api/v1/memories/user-defined",
+        headers=headers,
         json={
-            "user_id": user.id,
             "memory_key": "response_style",
             "memory_category": "conversation_preference",
             "memory_value": "简洁",
@@ -132,12 +142,15 @@ def test_user_defined_memory_can_be_archived_via_patch() -> None:
 
     archive_response = client.patch(
         f"/api/v1/memories/user-defined/{memory_id}",
+        headers=headers,
         json={"status": "archived", "memory_value": None, "raw_text": None},
     )
     assert archive_response.status_code == 200
     assert archive_response.json()["status"] == "archived"
 
-    active_list = client.get(f"/api/v1/memories/user-defined?user_id={user.id}&status=active")
+    active_list = client.get(
+        "/api/v1/memories/user-defined?status=active", headers=headers
+    )
     assert active_list.status_code == 200
     assert all(record["id"] != memory_id for record in active_list.json())
 
@@ -145,8 +158,9 @@ def test_user_defined_memory_can_be_archived_via_patch() -> None:
 def test_user_defined_memory_list_creates_default_records() -> None:
     client, session = build_client()
     user = create_user(session)
+    headers = auth_headers(session, user)
 
-    response = client.get(f"/api/v1/memories/user-defined?user_id={user.id}&status=active")
+    response = client.get("/api/v1/memories/user-defined?status=active", headers=headers)
     assert response.status_code == 200
     records = response.json()
 
@@ -161,6 +175,8 @@ def test_user_defined_memory_list_creates_default_records() -> None:
     assert {record["memory_key"] for record in records} >= {"goal_type", "response_style", "injury_notes"}
     assert all(record["status"] == "active" for record in records)
 
-    second_response = client.get(f"/api/v1/memories/user-defined?user_id={user.id}&status=active")
+    second_response = client.get(
+        "/api/v1/memories/user-defined?status=active", headers=headers
+    )
     assert second_response.status_code == 200
     assert len(second_response.json()) == 11

@@ -11,9 +11,7 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react'
-
-const apiBaseUrl =
-  import.meta.env.VITE_AGENT_BASE_URL?.replace(/\/$/, '') ?? 'http://127.0.0.1:8000/api/v1'
+import { apiFetch } from '../lib/apiClient'
 
 const muscleGroups = [
   { value: '', label: '全部' },
@@ -71,9 +69,8 @@ function formatExercise(item) {
   return parts.length ? parts.join(' · ') : '已记录动作'
 }
 
-async function requestWorkoutHistory(userId, filters, page) {
+async function requestWorkoutHistory(filters, page) {
   const query = new URLSearchParams({
-    user_id: String(userId),
     start_date: filters.start_date,
     end_date: filters.end_date,
     page: String(page),
@@ -82,7 +79,7 @@ async function requestWorkoutHistory(userId, filters, page) {
   if (filters.muscle_group) query.set('muscle_group', filters.muscle_group)
   if (filters.exercise_keyword.trim()) query.set('exercise_keyword', filters.exercise_keyword.trim())
 
-  const response = await fetch(`${apiBaseUrl}/workouts/history?${query.toString()}`)
+  const response = await apiFetch(`/workouts/history?${query.toString()}`)
   const payload = await response.json()
   if (!response.ok) throw new Error(payload.detail ?? `请求失败: ${response.status}`)
   return payload
@@ -120,8 +117,7 @@ function HistorySkeleton() {
   )
 }
 
-function WorkoutHistory({ session, onBackToChat }) {
-  const userId = session.userId ?? 1
+function WorkoutHistory({ onBackToChat }) {
   const [filters, setFilters] = useState(createDefaultFilters)
   const [history, setHistory] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -131,7 +127,7 @@ function WorkoutHistory({ session, onBackToChat }) {
     setLoading(true)
     setError('')
     try {
-      setHistory(await requestWorkoutHistory(userId, nextFilters, nextPage))
+      setHistory(await requestWorkoutHistory(nextFilters, nextPage))
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '训练历史加载失败')
       setHistory(null)
@@ -144,7 +140,7 @@ function WorkoutHistory({ session, onBackToChat }) {
     let cancelled = false
     const initialFilters = createDefaultFilters()
 
-    void requestWorkoutHistory(userId, initialFilters, 1)
+    void requestWorkoutHistory(initialFilters, 1)
       .then((payload) => {
         if (!cancelled) setHistory(payload)
       })
@@ -161,7 +157,7 @@ function WorkoutHistory({ session, onBackToChat }) {
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [])
 
   const handleSubmit = (event) => {
     event.preventDefault()

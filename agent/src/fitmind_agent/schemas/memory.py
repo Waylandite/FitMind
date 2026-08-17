@@ -8,7 +8,6 @@ from pydantic import Field
 
 
 class UserDefinedMemoryCreate(BaseModel):
-    user_id: int
     memory_key: str = Field(..., min_length=1, max_length=100)
     memory_category: str
     memory_value: str | None = None
@@ -45,7 +44,6 @@ class UserDefinedMemoryRead(BaseModel):
 
 
 class AgentDerivedMemoryCreate(BaseModel):
-    user_id: int
     memory_category: str
     memory_type: str = Field(..., min_length=1, max_length=100)
     summary_text: str = Field(..., min_length=1)
@@ -91,7 +89,6 @@ class AgentDerivedMemoryRead(BaseModel):
 
 
 class ChatSessionCreate(BaseModel):
-    user_id: int
     thread_id: str = Field(..., min_length=1, max_length=100)
     session_no: int = 1
     title: str | None = None
@@ -143,7 +140,6 @@ class ConversationLogRead(BaseModel):
 
 class ChatSessionSummaryCreate(BaseModel):
     session_id: int
-    user_id: int
     summary_type: str
     summary_text: str = Field(..., min_length=1)
     structured_payload: dict[str, Any] | list[Any] | None = None

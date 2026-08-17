@@ -7,6 +7,7 @@
 当前版本不是只覆盖基础业务表，而是在原有用户、训练、饮食、状态、对话日志的基础上，进一步纳入记忆系统设计，使数据库能够同时支撑：
 
 - 核心健身业务落库
+- 真实账号鉴权与多用户数据隔离
 - 对话日志管理
 - 用户长期偏好管理
 - Agent 长期记忆管理
@@ -105,7 +106,7 @@ FitMind 的记忆系统不建议只做一张通用 `memory` 表。
 
 ## 3. 第一版核心表清单
 
-当前版本推荐保留以下 19 张核心表：
+当前版本包含以下 21 张核心表：
 
 1. `users`
 2. `user_profiles`
@@ -126,6 +127,8 @@ FitMind 的记忆系统不建议只做一张通用 `memory` 表。
 17. `body_status_record_drafts`
 18. `llm_call_logs`
 19. `chat_turn_token_usage`
+20. `intent_clarifications`
+21. `auth_refresh_sessions`
 
 ---
 
@@ -149,6 +152,8 @@ users
   → workout_plan_drafts
   → nutrition_record_drafts
   → body_status_record_drafts
+  → intent_clarifications
+  → auth_refresh_sessions
 
 user_workout_records
   → user_workout_record_items
@@ -187,6 +192,7 @@ chat_sessions
 - `display_name`
 - `avatar_url`
 - `status`
+- `auth_version`
 - `last_login_at`
 - `created_at`
 - `updated_at`
@@ -200,7 +206,38 @@ chat_sessions
 
 - 使用普通用户表结构，不引入租户模型
 - `password_hash` 只保存加密后的密码
+- `password_hash` 使用 Argon2id，绝不保存明文密码
+- `auth_version` 初始为 `1`；修改密码或禁用账号后递增，使旧 Access Token 立即失效
 - `status` 建议值：`active`, `disabled`, `deleted`
+
+### `auth_refresh_sessions`
+
+用途：
+
+- 保存可撤销、可轮换的 Refresh Token 会话
+- 检测旧令牌重放并撤销整个令牌族
+- 记录设备和最近使用信息，后续可扩展登录设备管理
+
+字段：
+
+- `id`
+- `user_id`
+- `token_hash`
+- `family_id`
+- `expires_at`
+- `last_used_at`
+- `revoked_at`
+- `replaced_by_id`
+- `user_agent`
+- `ip_address`
+- `created_at`
+
+安全约束：
+
+- Refresh Token 使用高熵随机值，数据库仅保存 SHA-256 哈希
+- 每次刷新生成新记录，并通过 `replaced_by_id` 保留轮换关系
+- 已轮换令牌被再次使用时，撤销同一 `family_id` 下的全部会话
+- `token_hash` 全局唯一，`user_id`、`family_id` 和 `expires_at` 建立查询索引
 
 ---
 
@@ -940,6 +977,10 @@ chat_sessions
 
 - unique(`users.email`)
 - unique(`users.username`)
+- unique(`auth_refresh_sessions.token_hash`)
+- index(`auth_refresh_sessions.user_id`, `revoked_at`)
+- index(`auth_refresh_sessions.family_id`)
+- index(`auth_refresh_sessions.expires_at`)
 
 ### 训练计划相关
 
@@ -947,7 +988,7 @@ chat_sessions
 
 ### 训练记录相关
 
-- unique(`user_workout_records.user_id`, `record_date`)
+- index(`user_workout_records.user_id`, `record_date`)
 - index(`user_workout_records.plan_id`)
 - index(`user_workout_record_items.workout_record_id`, `sequence_no`)
 
@@ -1095,9 +1136,9 @@ V1 落库方式：
 
 ---
 
-## 8. MVP 最小落地表
+## 8. 当前落地表
 
-如果现在就开始实现，建议第一批 migration 只建以下表：
+当前 Alembic migration 已落地以下表：
 
 1. `users`
 2. `user_profiles`
@@ -1118,8 +1159,10 @@ V1 落库方式：
 17. `body_status_record_drafts`
 18. `llm_call_logs`
 19. `chat_turn_token_usage`
+20. `intent_clarifications`
+21. `auth_refresh_sessions`
 
-注：表 14-17 为草稿确认流程的必要支撑；表 18-19 为 Token 统计旁路系统。
+注：表 14-17 为草稿确认流程支撑；表 18-19 为 Token 统计旁路系统；表 20 为意图澄清状态机；表 21 为 Refresh Token 安全会话。
 
 所有表已通过 Alembic migration 在当前版本中建表完成。
 
@@ -1136,6 +1179,7 @@ V1 落库方式：
 5. 引入草稿确认机制，所有业务写入先走 draft 表，用户确认后再落正式表。
 6. 新增意图识别日志表，支撑意图分类质量评估。
 7. 新增 Token 统计旁路系统，记录每次 LLM 调用和每轮对话的 token 消耗。
+8. 新增真实账号会话，业务数据统一以服务端解析的当前用户身份隔离。
 
 这样更适合 FitMind 第一版产品。
 
@@ -1161,6 +1205,6 @@ V1 落库方式：
    记忆冲突与人工确认表
 
 当前阶段不建议一起做进 MVP。
-# 意图澄清表
+## 11. 意图澄清表
 
 `intent_clarifications` 以 `(user_id, session_id, status)` 索引未完成澄清，保存 `original_query`、JSON 候选、轮数、问题/回复、过期时间和 resolution 元数据。状态为 `pending`、`resolved`、`cancelled`、`expired`、`failed` 或 `superseded`；服务层保证一个会话仅保留一个有效 pending 记录。

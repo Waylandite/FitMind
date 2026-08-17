@@ -31,6 +31,8 @@ FitMind V1 的核心职责是：
 - 查询训练历史（日期、部位、动作筛选与确定性统计）
 - 查询最近健康状态与生成今日训练建议
 - 自然周周报、上周同期对比和趋势可视化
+- 真实注册、登录、刷新轮换、注销和修改密码
+- 基于 JWT 当前用户身份的全业务数据隔离
 
 ### 2.2 V1 不承担的职责
 
@@ -84,6 +86,13 @@ LLM 可以做：
 - LLM 调用明细（`llm_call_logs`）
 - 每轮 token 消耗（`chat_turn_token_usage`）
 
+### 3.5 身份由服务端令牌决定
+
+- Access Token 通过 `Authorization: Bearer` 传递，业务请求不再接收明文 `user_id`
+- Refresh Token 仅存放在限定 `/api/v1/auth` 路径的 HttpOnly Cookie 中
+- Repository 使用 `resource_id + current_user.id` 联合查询，跨用户资源统一返回 `404`
+- SSE 在创建响应流之前完成鉴权，日志、草稿、澄清和 Token 统计均使用可信用户身份
+
 ---
 
 ## 4. 架构总览
@@ -92,6 +101,7 @@ FitMind V1 的架构是一个 顺序服务链：
 
 ```text
 User
+  → Auth Dependency（JWT + status + auth_version）
   → ChatService.handle()
     → IntentClassifier (keyword rules → LLM classification)
     → IntentRouter (intent → module route)
@@ -123,6 +133,20 @@ LangGraph 目前仅在营养记录链路中使用（`NutritionLangGraphReActRunn
 ---
 
 ## 5. 核心组件
+
+### 5.0 Authentication Layer
+
+位置：`agent/src/fitmind_agent/api/dependencies.py`、`services/auth_service.py`
+
+职责：
+
+- Argon2id 密码哈希与校验
+- 生成并校验包含 issuer、audience、类型、版本和过期时间的 JWT Access Token
+- Refresh Token SHA-256 哈希存储、单次轮换和令牌族重放撤销
+- 校验账号状态与 `auth_version`
+- 将可信 `current_user` 注入所有受保护路由
+
+公开端点只有健康检查、元信息、注册、登录和刷新；其余 API 默认要求鉴权。
 
 ### 5.1 ChatService
 
@@ -442,6 +466,7 @@ agent/src/fitmind_agent/
   api/
     app.py                    — FastAPI 应用工厂
     routes/
+      auth.py                 — 注册、登录、刷新、注销、当前用户与修改密码
       chat.py                 — /api/v1/chat, /api/v1/chat/stream
       llm.py                  — /api/v1/llm/chat
       memory.py               — 记忆管理端点
@@ -467,12 +492,14 @@ agent/src/fitmind_agent/
     workout_plan_update_extraction/
     workout_record_extraction/
   repositories/
+    auth.py                   — 用户凭据与 Refresh Session CRUD
     intent.py                 — intent_recognition_logs CRUD
     memory.py                 — 会话/摘要/记忆 CRUD
     nutrition.py              — 饮食记录和草稿 CRUD
     token_usage.py            — LLM 调用日志和 token 汇总 CRUD
     workout.py                — 训练记录/草稿和计划 CRUD
   schemas/
+    auth.py
     chat.py
     intent.py                 — IntentCode, IntentRecognitionResult 等
     llm.py
@@ -481,6 +508,7 @@ agent/src/fitmind_agent/
     plan.py                   — WorkoutPlanWorkflowResult 等
     workout.py
   services/
+    auth_service.py           — JWT、Argon2id 与 Refresh Token 轮换
     body_status_record_service.py
     chat_context.py           — 对话上下文构建器
     chat_service.py           — 主编排器
@@ -511,6 +539,7 @@ FitMind V1 的实际架构是一个 顺序服务链，核心设计决策是：
 - 用 pending workflow context 保证多轮草稿对话的连贯性
 - 营养链路使用 LangGraph ReAct 循环驱动工具调用
 - Token 统计作为旁路系统，不影响主业务链路
+- 身份只从已验证 JWT 获取，所有用户资源由 Repository 层执行所有权隔离
 
 所有 LLM 调用通过 `DeepSeekLLMClient` 统一，所有数据库写入通过 Repository 层统一，所有结构化数据通过 Pydantic schema 校验。
 # 意图澄清状态机

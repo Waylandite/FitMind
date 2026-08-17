@@ -49,6 +49,7 @@ class User(Base, TimestampMixin):
     avatar_url: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     profile: Mapped[UserProfile | None] = relationship(back_populates="user", uselist=False)
     workout_plans: Mapped[list[UserWorkoutPlan]] = relationship(back_populates="user")
@@ -67,6 +68,33 @@ class User(Base, TimestampMixin):
     body_status_record_drafts: Mapped[list[BodyStatusRecordDraft]] = relationship(back_populates="user")
     workout_plan_drafts: Mapped[list[WorkoutPlanDraft]] = relationship(back_populates="user")
     intent_clarifications: Mapped[list[IntentClarification]] = relationship(back_populates="user")
+    refresh_sessions: Mapped[list[AuthRefreshSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class AuthRefreshSession(Base, TimestampMixin):
+    __tablename__ = "auth_refresh_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_auth_refresh_sessions_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    family_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    replaced_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth_refresh_sessions.id", ondelete="SET NULL")
+    )
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+
+    user: Mapped[User] = relationship(back_populates="refresh_sessions")
 
 
 class UserProfile(Base, TimestampMixin):

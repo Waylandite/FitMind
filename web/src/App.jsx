@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 
+import useAuth from './auth/useAuth'
 import ChatWorkspace from './pages/ChatWorkspace'
 import LoginExperience from './pages/LoginExperience'
 import WorkoutHistory from './pages/WorkoutHistory'
@@ -18,22 +19,29 @@ function ViewLoading() {
 }
 
 function App() {
-  const [session, setSession] = useState(null)
+  const { user, bootstrapping, logout } = useAuth()
   const [activeView, setActiveView] = useState('chat')
 
-  const handleLogout = () => {
-    setSession(null)
+  const handleLogout = async () => {
+    await logout()
     setActiveView('chat')
   }
 
-  if (session) {
+  if (bootstrapping) return <ViewLoading />
+
+  if (user) {
+    const session = {
+      userId: user.id,
+      name: user.display_name || user.username,
+      identifier: user.email,
+    }
     if (activeView === 'workout-history') {
-      return <WorkoutHistory session={session} onBackToChat={() => setActiveView('chat')} />
+      return <WorkoutHistory onBackToChat={() => setActiveView('chat')} />
     }
     if (activeView === 'weekly-trends') {
       return (
         <Suspense fallback={<ViewLoading />}>
-          <WeeklyTrends session={session} onBackToChat={() => setActiveView('chat')} />
+          <WeeklyTrends onBackToChat={() => setActiveView('chat')} />
         </Suspense>
       )
     }
@@ -48,10 +56,7 @@ function App() {
     )
   }
 
-  return <LoginExperience onLoginSuccess={(nextSession) => {
-    setSession(nextSession)
-    setActiveView('chat')
-  }} />
+  return <LoginExperience />
 }
 
 export default App
