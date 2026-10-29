@@ -12,3 +12,10 @@ __pycache__/
 **/__pycache__/
 *.pyc
 *.egg-info/
+.npm-cache/
+**/.pytest_cache/
+**/.ruff_cache/
+!docs/project-analysis-and-development-plan.md
+!docs/development-setup.md
+web/audit-report.local.json
+agent/pytest-cache-files-*/

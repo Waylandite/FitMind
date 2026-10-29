@@ -18,10 +18,7 @@ from fitmind_agent.services.llm_service import LLMService
 from fitmind_agent.services.prompt_loader import PromptLoader
 from fitmind_agent.services.token_usage_tracker import TokenUsageTracker
 
-
-CONFIRM_KEYWORDS = ("确认", "可以", "没问题", "保存", "落库", "对的", "没错", "好的")
-CANCEL_KEYWORDS = ("取消", "不要", "作废", "先不", "不保存", "放弃")
-QUESTION_KEYWORDS = ("为什么", "怎么", "什么意思", "哪里", "吗", "？", "?")
+from fitmind_agent.services.draft_reply_policy import classify_draft_reply
 
 
 class WorkoutPlanService:
@@ -75,9 +72,9 @@ class WorkoutPlanService:
         )
 
     def _handle_pending_draft(self, *, pending_draft, user_query: str) -> WorkoutPlanWorkflowResult:
-        normalized = user_query.strip().lower()
+        reply_action = classify_draft_reply(user_query)
 
-        if any(keyword in normalized for keyword in CANCEL_KEYWORDS):
+        if reply_action == "cancel":
             self.draft_repo.update(pending_draft, {"status": "cancelled", "remark": user_query})
             return WorkoutPlanWorkflowResult(
                 handled=True,
@@ -86,7 +83,7 @@ class WorkoutPlanService:
                 draft_id=pending_draft.id,
             )
 
-        if any(keyword in normalized for keyword in CONFIRM_KEYWORDS):
+        if reply_action == "confirm":
             draft_payload = WorkoutPlanDraftPayload.model_validate(pending_draft.draft_payload)
             persist_result = self._persist_draft(
                 user_id=pending_draft.user_id,
@@ -109,7 +106,7 @@ class WorkoutPlanService:
                 persist_result=persist_result,
             )
 
-        if any(keyword in normalized for keyword in QUESTION_KEYWORDS):
+        if reply_action == "question":
             draft_payload = WorkoutPlanDraftPayload.model_validate(pending_draft.draft_payload)
             return WorkoutPlanWorkflowResult(
                 handled=True,

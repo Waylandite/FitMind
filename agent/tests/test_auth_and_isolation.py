@@ -139,10 +139,13 @@ def test_refresh_rotation_replay_and_cookie_security() -> None:
     new_cookie = refreshed.cookies.get("fitmind_refresh_token")
     assert new_cookie and new_cookie != old_cookie
 
+    # Remove the domain-scoped current cookie before replaying the old token.
+    client.cookies.clear()
     client.cookies.set("fitmind_refresh_token", old_cookie, path="/api/v1/auth")
     replay = client.post("/api/v1/auth/refresh")
     assert replay.status_code == 401
 
+    client.cookies.clear()
     client.cookies.set("fitmind_refresh_token", new_cookie, path="/api/v1/auth")
     revoked_family = client.post("/api/v1/auth/refresh")
     assert revoked_family.status_code == 401

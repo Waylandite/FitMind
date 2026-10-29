@@ -25,6 +25,7 @@ dependencies = [
 dev = [
   "pytest>=8.3.0",
   "ruff>=0.5.0",
+  "httpx>=0.28.0",
 ]
 
 [build-system]
@@ -40,6 +41,10 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Preserve the original Ruff baseline across tool releases.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
