@@ -14,6 +14,8 @@
 [![React](https://img.shields.io/badge/React-Frontend-1C3144?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-Build-6C63FF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-UI-0B7285?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-Android-3159C7?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-347F6D?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/compose)
 
 <p>
   <img src="https://skillicons.dev/icons?i=python,fastapi,mysql,react,vite,tailwind,git" alt="FitMind 技术栈图标" />
@@ -47,9 +49,10 @@ FitMind 想解决的不是"陪聊"，而是：
 
 ## 项目定位
 
-FitMind 当前由两部分组成：
+FitMind 当前由三个客户端与服务模块组成：
 
 - `web` — 提供登录体验、对话页和用户交互入口
+- `android` — 提供 Kotlin + Jetpack Compose 原生移动端核心对话闭环
 - `agent` — 提供 Python API、意图识别、服务链编排和领域数据处理能力
 
 架构采用 **顺序服务链** 模式（详见 [agent-architecture.md](docs/agent-architecture.md)）：
@@ -116,6 +119,18 @@ FitMind 当前由两部分组成：
 | 用户档案 | 编辑身高、体重、目标、训练水平、训练日、伤病和饮食背景 |
 | 自定义记忆 | 维护训练偏好、关注主题、回答风格、饮食偏好和健康限制 |
 
+### Android V1 能力
+
+| 功能 | 说明 |
+|------|------|
+| 原生真实鉴权 | 登录、注册、启动刷新恢复与注销；Access Token 仅保存在内存 |
+| 安全 Refresh Cookie | Android Keystore AES-GCM 加密持久化，并发 `401` 通过 Mutex 单次刷新 |
+| Session 与缓存 | 新建、切换、恢复 Session；Room 缓存服务端会话和已持久化消息，离线只读 |
+| SSE 多轮对话 | 实时解析 Intent、Agent State、Workflow、Clarification、Delta、Done 与 Error |
+| Agent 状态展示 | 对应助手消息上方展示默认折叠的执行轨迹和首字符思考耗时 |
+| 草稿与澄清 | 支持确认、取消、自然语言纠错和意图候选选择，跨设备恢复挂起状态 |
+| 原生自适应 UI | 手机使用 Material 3 会话抽屉，宽屏自动切换会话列表与聊天双栏 |
+
 ---
 
 ## 当前边界
@@ -126,7 +141,8 @@ FitMind 已具备真实账号系统和基础多用户隔离，但距离完整生
 - Access Token 注销后最多仍可存活 15 分钟；修改密码或禁用账号会通过 `auth_version` 立即使旧令牌失效
 - 营养 ReAct 已支持本地食物数据工具，外部权威营养数据库仍以 MCP 扩展点保留
 - 用户自定义记忆已可编辑；Agent 派生记忆的自动提取、冲突合并和人工审阅仍待完善
-- 当前主要面向桌面端，移动端布局、离线能力和消息推送尚未完成
+- Android V1 当前只覆盖核心对话闭环；训练历史、周报、档案和自定义记忆将在 V1.1/V1.2 移植
+- Android 离线模式仅支持查看缓存，不支持离线草稿、消息队列和推送通知
 - 健康建议用于训练与生活方式参考，不替代医疗诊断
 
 ---
@@ -161,12 +177,21 @@ FitMind 已具备真实账号系统和基础多用户隔离，但距离完整生
 
 详见 [docs/database-design.md](docs/database-design.md)
 
+### Android 客户端
+
+- Kotlin + Jetpack Compose + Material 3
+- Hilt + ViewModel + Repository + Coroutines/Flow 单向数据流
+- Retrofit + OkHttp + Kotlin Serialization，手动解析 POST SSE
+- Room 只读缓存 + Android Keystore 加密 Refresh Cookie
+- 设计与协议详见 [docs/android-client-design.md](docs/android-client-design.md)
+
 ---
 
 ## 项目时间线
 
 | 日期 | 提交 | 更新内容 |
 |------|------|---------|
+| 2026-08-20 | 当前工作区 | 新增 Kotlin + Jetpack Compose Android V1，打通安全鉴权、SSE 对话、Session 恢复、草稿与意图澄清 |
 | 2026-08-17 | 当前版本 | 新增真实账号系统、Refresh Token 安全轮换和全业务多用户隔离 |
 | 2026-07-31 | `0990ea6` | 新增持久化意图澄清、安全决策策略、前端澄清卡片和恢复协议 |
 | 2026-07-30 | `44b8e7f` | 新增自然周周报、跨周确定性统计、趋势图与聊天 SSE 周报链路 |
@@ -202,7 +227,9 @@ FitMind 已具备真实账号系统和基础多用户隔离，但距离完整生
 
 ### 第三阶段：产品化
 
-- 完整移动端适配、PWA、离线草稿和消息提醒
+- Android V1.1 移植训练历史、用户档案、自定义记忆和修改密码
+- Android V1.2 移植周报趋势、Vico 原生图表和完整平板交互
+- 继续完善 PWA、受控离线草稿、消息提醒与多端状态同步
 - 图片识别辅助饮食与器械训练记录
 - 导入可穿戴设备和健康平台数据
 - 支持自定义训练计划周期模板
@@ -216,6 +243,7 @@ FitMind 已具备真实账号系统和基础多用户隔离，但距离完整生
 FitMind/
   agent/       # Python Agent 服务，API 与领域服务链
   web/         # React Web 应用，登录页与对话页
+  android/     # Kotlin + Jetpack Compose 原生 Android 客户端
   docs/        # 项目设计文档
   dataset/     # 测试用例与评估数据
   README.md
@@ -247,6 +275,15 @@ alembic upgrade head
 uvicorn fitmind_agent.main:app --reload --port 8000
 ```
 
+### 构建 Android 客户端
+
+需要 JDK 17、Android SDK 36 与 Build Tools 36。Android 模拟器通过 `10.0.2.2:8000` 访问本机 Agent 服务。
+
+```bash
+cd android
+./gradlew testDebugUnitTest lintDebug assembleDebug
+```
+
 ### 质量检查
 
 ```bash
@@ -274,8 +311,9 @@ npm run build
 - 用户档案：`GET/PUT /api/v1/profiles/me`
 - 自定义记忆：`GET/POST/PATCH/DELETE /api/v1/memories/user-defined`
 - 当前澄清：`GET /api/v1/memories/sessions/{session_id}/clarification`
+- 当前挂起草稿：`GET /api/v1/memories/sessions/{session_id}/pending-workflow`
 
-除健康检查、元信息、注册、登录和刷新外，API 均需携带 `Authorization: Bearer <access_token>`。Refresh Token 只由浏览器通过 HttpOnly Cookie 发送，不暴露给 JavaScript。
+除健康检查、元信息、注册、登录和刷新外，API 均需携带 `Authorization: Bearer <access_token>`。Web 端 Refresh Token 只由浏览器通过 HttpOnly Cookie 发送；Android 端只持久化经 Keystore 加密的同名 Cookie。
 
 ---
 
@@ -294,6 +332,8 @@ npm run build
 | [docs/intent-routing-test-report.md](docs/intent-routing-test-report.md) | 意图识别联调测试报告 |
 | [docs/workout-record-workflow-report.md](docs/workout-record-workflow-report.md) | 训练记录提取与确认流程报告 |
 | [docs/weekly-trends-design.md](docs/weekly-trends-design.md) | 自然周对比、统计口径和趋势页接口设计 |
+| [docs/android-client-design.md](docs/android-client-design.md) | Android V1 架构、安全协议、缓存和页面交互设计 |
+| [docs/project-status-and-interview-guide.md](docs/project-status-and-interview-guide.md) | 当前开发进度、技术债、架构取舍与面试问答 |
 
 ---
 

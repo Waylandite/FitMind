@@ -20,11 +20,31 @@ from fitmind_agent.schemas.memory import ConversationLogRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryCreate
 from fitmind_agent.schemas.memory import UserDefinedMemoryRead
 from fitmind_agent.schemas.memory import UserDefinedMemoryUpdate
+from fitmind_agent.schemas.chat import PendingWorkflowResponse
+from fitmind_agent.services.chat_service import ChatService
 from fitmind_agent.services.memory_service import MemoryService
 from fitmind_agent.repositories.intent_clarification import IntentClarificationRepository
 from fitmind_agent.services.intent_clarification_service import IntentClarificationService
 
 router = APIRouter(prefix="/memories", tags=["memory"])
+
+
+@router.get(
+    "/sessions/{session_id}/pending-workflow",
+    response_model=PendingWorkflowResponse | None,
+)
+def get_pending_workflow(
+    session_id: int,
+    current_user: CurrentUser,
+    db: Session = Depends(get_db_session),
+) -> PendingWorkflowResponse | None:
+    if MemoryService(db).chat_session_repo.get_by_id_for_user(session_id, current_user.id) is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    payload = ChatService(db=db).get_pending_workflow(
+        user_id=current_user.id,
+        session_id=session_id,
+    )
+    return PendingWorkflowResponse.model_validate(payload) if payload is not None else None
 
 
 @router.get("/sessions/{session_id}/clarification")

@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from sqlalchemy import create_engine
@@ -9,7 +10,12 @@ from sqlalchemy.pool import StaticPool
 
 from fitmind_agent.api.app import create_app
 from fitmind_agent.db.models import Base
+from fitmind_agent.db.models import BodyStatusRecordDraft
+from fitmind_agent.db.models import ChatSession
+from fitmind_agent.db.models import NutritionRecordDraft
 from fitmind_agent.db.models import User
+from fitmind_agent.db.models import WorkoutPlanDraft
+from fitmind_agent.db.models import WorkoutRecordDraft
 from fitmind_agent.db.session import get_db_session
 from fitmind_agent.services.auth_service import AuthService
 
@@ -46,6 +52,86 @@ def create_user(session: Session) -> User:
 def auth_headers(session: Session, user: User) -> dict[str, str]:
     token = AuthService(session).create_access_token(user)
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize(
+    ("draft_model", "workflow", "intent"),
+    [
+        (WorkoutRecordDraft, "workout_record", "today_workout_record"),
+        (NutritionRecordDraft, "nutrition_record", "today_nutrition_record"),
+        (BodyStatusRecordDraft, "body_status_record", "today_body_status_record"),
+        (WorkoutPlanDraft, "workout_plan_update", "user_workout_plan_update"),
+    ],
+)
+def test_pending_workflow_restores_each_draft_type(
+    draft_model,
+    workflow: str,
+    intent: str,
+) -> None:
+    client, session = build_client()
+    user = create_user(session)
+    chat_session = ChatSession(
+        user_id=user.id,
+        thread_id=f"pending-{workflow}",
+        session_no=1,
+        title="Pending workflow",
+        status="active",
+    )
+    session.add(chat_session)
+    session.flush()
+    draft = draft_model(
+        user_id=user.id,
+        session_id=chat_session.id,
+        status="pending",
+        raw_text="卧推 60kg 5 组",
+        draft_payload={"raw_text": "卧推 60kg 5 组"},
+    )
+    session.add(draft)
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/memories/sessions/{chat_session.id}/pending-workflow",
+        headers=auth_headers(session, user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workflow"] == workflow
+    assert payload["intent"] == intent
+    assert payload["draft_id"] == draft.id
+    assert payload["draft"]["raw_text"] == "卧推 60kg 5 组"
+    assert payload["draft_actions"]["confirm_text"] == "确认保存"
+    assert payload["draft_actions"]["correction_prefill"]
+
+
+def test_pending_workflow_returns_null_and_hides_other_users_session() -> None:
+    client, session = build_client()
+    owner = create_user(session)
+    other = User(email="other@example.com", username="other", password_hash="hash")
+    session.add(other)
+    session.flush()
+    chat_session = ChatSession(
+        user_id=owner.id,
+        thread_id="owner-session",
+        session_no=1,
+        title="Owner session",
+        status="active",
+    )
+    session.add(chat_session)
+    session.commit()
+
+    empty = client.get(
+        f"/api/v1/memories/sessions/{chat_session.id}/pending-workflow",
+        headers=auth_headers(session, owner),
+    )
+    hidden = client.get(
+        f"/api/v1/memories/sessions/{chat_session.id}/pending-workflow",
+        headers=auth_headers(session, other),
+    )
+
+    assert empty.status_code == 200
+    assert empty.json() is None
+    assert hidden.status_code == 404
 
 
 def test_profile_route_creates_default_before_upsert() -> None:

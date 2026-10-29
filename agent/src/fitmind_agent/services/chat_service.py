@@ -1171,6 +1171,44 @@ class ChatService:
         if self.db is None or payload.user_id is None or session_id is None:
             return None
 
+        return self._find_pending_workflow_context(
+            user_id=payload.user_id,
+            session_id=session_id,
+        )
+
+    def get_pending_workflow(self, *, user_id: int, session_id: int) -> dict | None:
+        if self.db is None:
+            return None
+        context = self._find_pending_workflow_context(
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if context is None:
+            return None
+
+        draft = context["draft"]
+        draft_payload = draft.draft_payload or {}
+        return {
+            "workflow": context["workflow"],
+            "intent": context["intent"],
+            "draft_id": draft.id,
+            "draft": draft_payload,
+            "draft_actions": self._build_draft_actions(
+                workflow=context["workflow"],
+                action="draft_created",
+                draft_id=draft.id,
+                payload=draft_payload,
+            ),
+            "updated_at": draft.updated_at or draft.created_at,
+        }
+
+    def _find_pending_workflow_context(
+        self,
+        *,
+        user_id: int,
+        session_id: int,
+    ) -> dict | None:
+
         candidates = []
         for context in (
             {
@@ -1180,7 +1218,7 @@ class ChatService:
                 "label": "饮食记录",
                 "repo": NutritionRecordDraftRepository(self.db),
                 "draft": NutritionRecordDraftRepository(self.db).get_latest_pending(
-                    user_id=payload.user_id,
+                    user_id=user_id,
                     session_id=session_id,
                 ),
             },
@@ -1191,7 +1229,7 @@ class ChatService:
                 "label": "训练记录",
                 "repo": WorkoutRecordDraftRepository(self.db),
                 "draft": WorkoutRecordDraftRepository(self.db).get_latest_pending(
-                    user_id=payload.user_id,
+                    user_id=user_id,
                     session_id=session_id,
                 ),
             },
@@ -1202,7 +1240,7 @@ class ChatService:
                 "label": "身体状态记录",
                 "repo": BodyStatusRecordDraftRepository(self.db),
                 "draft": BodyStatusRecordDraftRepository(self.db).get_latest_pending(
-                    user_id=payload.user_id,
+                    user_id=user_id,
                     session_id=session_id,
                 ),
             },
@@ -1213,7 +1251,7 @@ class ChatService:
                 "label": "长期训练计划",
                 "repo": WorkoutPlanDraftRepository(self.db),
                 "draft": WorkoutPlanDraftRepository(self.db).get_latest_pending(
-                    user_id=payload.user_id,
+                    user_id=user_id,
                     session_id=session_id,
                 ),
             },

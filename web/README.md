@@ -1,16 +1,30 @@
-# React + Vite
+# FitMind Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+FitMind 的 React Web 客户端，负责真实账号登录、Session 对话、SSE 流式回复、Agent 状态展示、业务草稿确认、训练历史和周报趋势。
 
-Currently, two official plugins are available:
+## 技术栈
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19 + Vite 8
+- Tailwind CSS 4
+- React Markdown + remark-gfm
+- Recharts
+- Vitest + ESLint
 
-## React Compiler
+## 本地运行
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+默认访问 `http://127.0.0.1:5173`，通过 `/api/v1` 协议连接 FitMind Agent 服务。
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 质量检查
+
+```bash
+npm test
+npm run lint
+npm run build
+```
+
+鉴权状态统一由 `src/auth/AuthContext.jsx` 管理，普通请求统一经过 `src/lib/apiClient.js`；页面组件不要直接持久化 Access Token 或自行拼接用户 ID。

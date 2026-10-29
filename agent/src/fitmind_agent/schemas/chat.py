@@ -1,4 +1,5 @@
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -39,3 +40,21 @@ class ChatResponse(BaseModel):
     model: str | None = None
     reply: str
     clarification: dict | None = None
+
+
+class DraftActions(BaseModel):
+    label: str
+    hint: str
+    confirm_text: str
+    cancel_text: str
+    correction_text: str
+    correction_prefill: str
+
+
+class PendingWorkflowResponse(BaseModel):
+    workflow: str
+    intent: str
+    draft_id: int
+    draft: dict[str, Any]
+    draft_actions: DraftActions
+    updated_at: datetime

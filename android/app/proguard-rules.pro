@@ -1,0 +1,3 @@
+-keepattributes Signature, InnerClasses, EnclosingMethod
+-keepclassmembers class **$$serializer { *; }
+-keep,includedescriptorclasses class com.fitmind.app.core.network.dto.**$$serializer { *; }
